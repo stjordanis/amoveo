@@ -151,5 +151,45 @@ function append_children(d, l) {
         d.appendChild(l[i]);
     }
 }
+function text(a) {
+    var x2 = document.createElement("h8");
+    x2.innerHTML = a;
+    return x2;
+};
 
 
+function tree_number_to_value(t) {
+    if (t < 101) {
+        return t;
+    } else {
+        var top = 101;
+        var bottom = 100;
+	var t2 = t - 100;
+        var x = tree_number_det_power(10000, top, bottom, t2);
+        return Math.floor(x / 100);
+    }
+}
+function tree_number_det_power(base, top, bottom, t) {
+    if (t == 1) {
+        return Math.floor((base * top) / bottom);
+    }
+    var r = Math.floor(t % 2);
+    if (r == 1) {
+        var base2 = Math.floor((base * top) / bottom);
+        return tree_number_det_power(base2, top, bottom, t-1);
+    } else if (r == 0) {
+        var top2 = Math.floor((top * top)  / bottom);
+        return tree_number_det_power(base, top2, bottom,
+                                     Math.floor(t / 2));
+    }
+}
+function parse_address(A) {
+    //remove spaces or periods. " " "."
+    A2 = A.replace(/\ /g,'');
+    A3 = A2.replace(/\./g,'');
+    A4 = A3.replace(/\n/g,'');
+    //if it is the wrong length, make an error.
+    //88
+    B = ((A4).length == 88);
+    if (B) { return A4; } else { return 0; };
+}

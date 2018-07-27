@@ -8,13 +8,81 @@
 
 Maybe we should add a governance variables for each opcode in the VM. To be a gas price per opcode.
 
-Maybe question oracles don't need so much (any?) initial liquidity like governance oracles do.
+version in spend txs is not being used.
 
 
+### governance ideas
+
+* consider reducing governance variable "maximum oracle time". it takes too long to close bad-question oracles.
+
+* raise the miner reward.
 
 
 ### Things to do
 
+* light wallet improvements suggested by OK.
+
+* maybe remove the translation tool from the light node. It is expensive, and google translate can already provide this service in chrome.
+
+* combinatorial markets.
+
+* spend_tx is using global state "mode". This should instead be passed to the function.
+
+* maybe we should have a game to see who can keep testnet mining pools active most, during the game we encourage spamming each other and making unusual transactions to cause problems.
+
+* look at the pull request for the escrow tool.
+
+* get rock-paper-scissors working in chalang.
+
+* teach the light node to generate messages about oracles. to make it easier to know when to vote.
+
+* make sure that in the markets, evidence outcome always has a bigger nonce than no_publish.
+
+* maybe tx_pool_feeder should make a new thread for each tx being added, and listen for a response. If it doesn't respond in time, then drop the tx.
+- Maybe txs should return error codes instead of crashing
+
+* improve signal|noise ratio in logging.
+
+* maybe verifying blocks should only be parallelized in sync_mode:quick. that way we can have more useful error messages in sync_mode:normal.
+
+record tx_pool should keep track of the block hash that it is building on.
+
+potential block should probably be completely rewritten.
+
+* mining pools are regularly creating multiple blocks at the same height. Even when there are more than 3 minutes between finding the blocks.
+
+* add function to api for checking signatures.
+* add tool to mining page for early payout.
+
+* block_hashes is getting too big in ram. We should delete old information out of it.
+
+
+* sync blocks faster
+- maybe block_absorber:save should be cast instead of call.
+- maybe checks in block_absorber:block_internal should be moved somewhere else where they can be run in parallel. block_absorber should write the new data to the consensus state, and nothing more.
+
+
+* sync_mode:normal and sync_mode:quick should be available from the api.
+
+* we should have more rules for ignoring bad peers. If they send the same request too often, or if they send invalid data more than 10 times per minute. 
+
+* tx are still being dropped.
+
+* during DDOS, sometimes nodes end up dropping all their peers, and are then unable to sync. We should refuse to black list the hard coded peers.
+
+* similar to the oracle lookup tool, we should have a governance value lookup tool in the light node.
+
+* built in translation to the light node is a bad idea. Google chrome has translation built in anyway.
+
+* check that txs don't get dropped when a block is orphaned.
+
+* is merkle spk.js looking up the merkle proofs for the wrong information??
+
+* the market.fs contract has a problem. Is the expiration date output of the contract relative, or absolute? I am not consistent.
+
+* we should test the case when there are multiple partially-matched trades in the order book simultaniously.
+
+* when you make a channel in the light node, there should be a way to look up how much the server charges before
 
 * the light node should have an interface for encrypting and decrypting messages.
 * display oracle data verified by merkle proofs.

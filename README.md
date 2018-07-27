@@ -4,6 +4,8 @@ Amoveo
 
 (work in progress) [中文](docs/cn/README.md)
 
+[Amoveo on Discord. Русский чат. 中文聊天.](https://discord.gg/a52szJw)
+
 
 Amoveo is a blockchain meant for enforcement of investment and insurance contracts.
 
@@ -29,11 +31,9 @@ Amoveo main net was launched at 11:00 AM GMT on March 2, 2018.
 
 [Amoveo on Telegram](https://t.me/amoveo)
 
-[Amoveo on Discord](https://discord.gg/a52szJw)
+[Amoveo on Discord. Русский чат. 中文聊天.](https://discord.gg/a52szJw)
 
 [Statistics page to see historic difficulty, blocktime, hashrate, and more.](https://jimhsu.github.io/amoveo-stats/)
-
-[Veoscan explorer. Nodes, blocks, txs, markets, holders, and more.](http://veoscan.io/)
 
 
 ## Light node
@@ -47,11 +47,21 @@ You can use the light node to participate in [markets](docs/light_node/market.md
 A light node that currently has markets is [here](http://159.89.106.253:8080/wallet.html).
 And the interface to look at the markets is [here](http://159.89.106.253:8080/explorer.html).
 
+## Exchanges
+
+this is an escrow tool from Zack who wrote Amoveo: http://159.89.106.253:8087/main.html
+Be very careful using exchanges. They are centralized, the operator can take all the veo if they wanted.
+
 
 ## Block Explorer
+
 The block explorer for the network is [here](http://159.65.120.84:8080/explorer.html).
 
 Another explorer is [here](http://159.89.106.253:8080/explorer.html). This one has some markets where you can gamble.
+
+[Veoscan explorer. Nodes, blocks, txs, markets, holders, and more.](http://veoscan.io/)
+
+[Veopool explorer](http://explorer.veopool.pw/)
 
 
 ## Full node
@@ -66,13 +76,13 @@ Commands such as:
 
 ## Mining
 
-[This is a miner. it is for Nvidia or AMD GPUs. It is closed-source.](https://github.com/PhamHuong92/VeoMiner)
-How to turn it on: `veominer.exe BGH+3P768A9cSNR3GLSRXgsokSL/Jdbm+rOJogbgiPxq8M+J2R4nVxZ+Hj6WdI4rMsq6nPzkMh77WGBCMx89HUM= all 64 100 SEED 65336 0 false http://159.65.120.84:8085/`
-
-[here is another miner](https://github.com/krypdkat/AmoveoMinerMan)
-
+[This is an open-source miner for AMD and Nvidia GPU. Currently only works with Linux](https://github.com/zack-bitcoin/VeoCL)
 
 [Here is an open-source miner for Nvidia GPU, it works for linux and windows](https://github.com/Mandelhoff/AmoveoMinerGpuCuda)
+
+[This is a miner. it is for Nvidia or AMD GPUs. It is closed-source.](https://github.com/PhamHuong92/VeoMiner)
+
+[here is another closed source miner](https://github.com/krypdkat/AmoveoMinerMan)
 
 Amoveo's mining algorithm uses SHA256 like bitcoin. But it is a little different, so bitcoin ASICs cannot be used to mine Amoveo.
 
@@ -92,6 +102,12 @@ http://amoveo.noncense.tech/
 
 There are people trading now on discord https://discord.gg/xJQcVaT
 
+An escrow tool hosted by Zack: http://159.89.106.253:8087/main.html
+
+Qtrade exchange for BTC-VEO trading: https://qtrade.io/market/VEO_BTC
+
+Amoveo-Exchange for ETH-VEO trading: https://amoveo.exchange/
+
 An exchange is being written here https://github.com/zack-bitcoin/amoveo-exchange
 
 
@@ -103,7 +119,7 @@ The "classic" version only pays a miner when they find a block.
 
 ## Developers
 
-If you want to build on top of Amoveo [read the develper's guide](docs/getting-started/quick_start_developer_guide.md)
+If you want to build on top of Amoveo [read the developer's guide](docs/getting-started/quick_start_developer_guide.md)
 
 
 ## Donations

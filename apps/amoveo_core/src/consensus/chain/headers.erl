@@ -84,7 +84,9 @@ absorb([First|T], R) when is_binary(First) ->
 absorb([Header | T], CommonHash) ->
     Bool = Header#header.difficulty >= constants:initial_difficulty(),
     if
-	not(Bool) -> ok;%we should delete the peer that sent us this header.
+	not(Bool) -> 
+	    1=2,
+	    ok;%we should delete the peer that sent us this header.
 	true ->
 	    Hash = block:hash(Header),
 	    case read(Hash) of
@@ -93,18 +95,22 @@ absorb([Header | T], CommonHash) ->
 		error ->
 		    case check_pow(Header) of
 			false -> io:fwrite("invalid header without enough work"),
+				 1=2,
 				 ok;
 			true ->
 						%true = check_pow(Header),%check that there is enough pow for the difficulty written on the block
 			    case read(Header#header.prev_hash) of
 				error -> io:fwrite("don't have a parent for this header\n"),
+					 1=2,
 					 error;
 				{ok, _} ->
 				    case check_difficulty(Header) of%check that the difficulty written on the block is correctly calculated
 					{true, _} ->
 					    gen_server:call(?MODULE, {add, Hash, Header}),
 					    absorb(T, CommonHash);
-					_ -> io:fwrite("incorrectly calculated difficulty\n")
+					_ -> 
+					    1=2,
+					    io:fwrite("incorrectly calculated difficulty\n")
 				    end
 			    end
 		    end
@@ -215,7 +221,12 @@ difficulty_should_be(A) ->
     D1 = A#header.difficulty,
     RF = constants:retarget_frequency(),
     Height = A#header.height,
-    X = Height rem RF,
+    %X = Height rem RF,%fork
+    B = Height > forks:get(4),
+    X = if
+	    B -> Height rem (RF div 2);
+	    true -> Height rem RF
+	end,
     if
         (X == 0) and (not(Height < 10)) ->
             difficulty_should_be2(A);
@@ -229,10 +240,12 @@ difficulty_should_be2(Header) ->
     M1 = median(Times1),
     M2 = median(Times2),
     Tbig = M1 - M2,
-    T = Tbig div F,%T is the estimated block time over last 2000 blocks.
+    T0 = Tbig div F,%T is the estimated block time over last 2000 blocks.
+    T1 = max(1, T0),
+    T = min(T1, Header#header.period * 7 div 6),
     NT = pow:recalculate(Hash2000#header.difficulty,
                          Header#header.period,
-                         max(1, T)),
+                         T),
     max(NT, constants:initial_difficulty()).
 retarget(Header, 1, L) -> {L, Header};
 retarget(Header, N, L) ->

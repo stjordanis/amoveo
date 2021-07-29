@@ -1,23 +1,31 @@
+WARNING
+========
+
+this is an old expired version of the documentation.
+
+Please use the new documentation instead. 
+
+Here is the main page for the new documentation: https://github.com/zack-bitcoin/amoveo-docs 
+
+And [here is the link for the newest version of the page you are currently looking at](https://github.com/zack-bitcoin/amoveo-docs/blob/master//community_roadmap.md)
+
 that is less precise than my todo list, and more exciting for the community to look at.
 
 
-1 VEO-BTC exchange
-  - This will allow people to more easily buy and sell Veo.
-  - This will make it easy for people who aren't currently invested in Veo to participate in Amoveo markets.
+My philosophy is that a blockchain should be created as a lean software startup. With this kind of new technology, there are many things that we do not know. We need to avoid making assumptions about how the technology will be used.
+We need to listen to users and adapt to their needs. We need to investigate many possible use-cases to see which will be popular first.
 
-2 combinatorial markets
-  - we already have binary market smart contracts. This smart contract is for a different type of market.
-  - This type of market uses 2 oracles instead of 1, and it has 9 possible outcomes instead of 3.
-  - you can read about it on page 4 of this PDF from BitcoinHivemind: http://bitcoinhivemind.com/papers/2_PM_Types.pdf
-
-3 acquire first users of the markets. Try these things to search for potential users:
+1 acquire first users of the markets. Try these things to search for potential users:
+  - contract for difference/stable coins
   - use a smart contract to pay a reward to someone for uploading a torrent for an expensive textbook.
   - use a market to fund the creation of something for Amoveo.
-  - use a combinatorial market to decide how we will do something for Amoveo.
+  - use a combinatorial market to decide how we will do something for Amoveo. 
   - use a markets to do things from this list: http://bitcoinhivemind.com/papers/3_PM_Applications.pdf 
 
-4 study our users, and keep improving Amoveo based on how they use it and what they want.
+2 study our users, and keep improving Amoveo based on how they use it and what they want.
 
-5 rename and rebrand Amoveo based on who our first users are, and who it makes sense to market ourselves towards.
+3 rename and rebrand Amoveo based on who our first users are, and who it makes sense to market ourselves towards.
+  - This is the point at which we will have clear goals and features that we can put on a website, this way potential users can absorb our goals and features in 10 seconds.
+  - Any money spent on advertising before this point in time is going to be dozens or hundreds of times less effective.
 
-6 use a smart contract to incentivize targetted advertising to grow our user base.
+4 use a smart contract to incentivize targetted advertising to grow our user base.

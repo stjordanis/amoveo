@@ -1,14 +1,15 @@
 -module(accounts).
 -export([bets/1, update_bets/2, new/2,%custom for this tree
          write/2, get/2, delete/2,%update tree stuff
-         dict_update/4, dict_update/5, dict_get/2, dict_write/2, dict_write/3, dict_delete/2,%update dict stuff
+         dict_update/4, dict_update/5, dict_get/2, dict_get/3, dict_write/2, dict_write/3, dict_delete/2,%update dict stuff
 	 meta_get/1,
 	 verify_proof/4,make_leaf/3,key_to_int/1,serialize/1,test/0, deserialize/1, all_accounts/0]).%common tree stuff
 -define(id, accounts).
 -include("../../records.hrl").
 bets(Account) -> Account#acc.bets.
 new(Pub, Balance) ->
-    Root0 = constants:root0(),
+    %Root0 = constants:root0(),
+    Root0 = trees:empty_tree(oracle_bets),
     #acc{pubkey = Pub, balance = Balance, nonce = 0, bets = Root0, bets_hash = oracle_bets:root_hash(Root0)}.
 dict_update(Pub, Dict, Amount, NewNonce) ->
     Account = dict_get(Pub, Dict),
@@ -39,10 +40,17 @@ update_bets(Account, Bets) ->
 key_to_int(X) ->
     trees:hash2int(ensure_decoded_hashed(X)).
 dict_get(Key, Dict) ->
+    dict_get(Key, Dict, 0).
+dict_get(Key, Dict, Height) ->
     %X = dict:fetch({accounts, Key}, Dict),
     X = dict:find({accounts, Key}, Dict),
+    B = Height > forks:get(39),
+    C = if
+            B -> error;
+            true -> empty
+        end,
     case X of
-        error -> empty;
+        error -> C;
         {ok, 0} -> empty;
         {ok, {0, _}} -> empty;
         {ok, {Y, Meta}} -> 
@@ -152,12 +160,13 @@ all_accounts() ->
     A2.
 
 test() ->
-    {Pub, _Priv} = testnet_sign:new_key(),
+    {Pub, _Priv} = signing:new_key(),
     Acc = new(Pub, 0),
     S = serialize(Acc),
     Acc1 = deserialize(S),
     Acc = Acc1#acc{bets = Acc#acc.bets},
-    Root0 = constants:root0(),
+    %Root0 = constants:root0(),
+    Root0 = trees:empty_tree(accounts),
     NewLoc = write(Acc, Root0),
     {Root, Acc, Proof} = get(Pub, NewLoc),
     true = verify_proof(Root, Pub, serialize(Acc), Proof),

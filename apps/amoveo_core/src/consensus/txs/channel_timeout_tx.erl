@@ -1,6 +1,5 @@
 -module(channel_timeout_tx).
 -export([go/4, make/5, make_dict/3, cid/1, aid/1, spk_aid1/1, spk_aid2/1]).
--record(timeout, {aid = 0, nonce = 0, fee = 0, cid = 0, spk_aid1, spk_aid2}).
 -include("../../records.hrl").
 %If your partner is not helping you, this is how you start the process of closing the channel. 
 %you don't provide the channel state now, instead you use a channel_slash to provide that data.
@@ -11,8 +10,8 @@ spk_aid2(X) -> X#timeout.spk_aid2.
     
    
 make_dict(ID, CID, Fee) -> 
-    Acc = trees:dict_tree_get(accounts, ID),
-    Channel = trees:dict_tree_get(channels, CID),
+    Acc = trees:get(accounts, ID),
+    Channel = trees:get(channels, CID),
     Acc1 = channels:acc1(Channel),
     Acc2 = channels:acc2(Channel),
     Nonce = Acc#acc.nonce,
@@ -44,8 +43,16 @@ go(Tx, Dict, NewHeight, _) ->
     From = Tx#timeout.aid,
     CID = Tx#timeout.cid,
     Channel = channels:dict_get(CID, Dict),
+    F12 = forks:get(12),
+    F16 = forks:get(16),
+    if
+        ((NewHeight > 62233) and (NewHeight < F16)) ->
+            1=2;%this can be deleted once fork 16 activates.
+        NewHeight > F12 ->
+            true = channels:nonce(Channel) > 1;
+        true -> ok
+    end,
     0 = channels:closed(Channel),
-    CA = channels:amount(Channel),
     LM = channels:last_modified(Channel),
     TD = NewHeight - LM,
     true = TD >= channels:delay(Channel),
@@ -72,4 +79,11 @@ go(Tx, Dict, NewHeight, _) ->
     %Slasher = channels:slasher(Channel),
     Acc4 = accounts:dict_update(From, Dict3, -Fee, none),
     Dict4 = accounts:dict_write(Acc4, Dict3),
-    channels:dict_delete(CID, Dict4).
+    F17 = forks:get(17),
+    if 
+        NewHeight > F17 -> 
+            NewChannel = channels:dict_update(CID, Dict4, none, 0, 0, NewHeight, true),
+            channels:dict_write(NewChannel, Dict4);
+        true ->
+            channels:dict_delete(CID, Dict4)
+    end.

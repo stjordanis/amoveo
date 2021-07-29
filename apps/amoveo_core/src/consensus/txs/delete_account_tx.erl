@@ -1,16 +1,14 @@
+%unused
+
 -module(delete_account_tx).
 -export([go/4, new/4, make_dict/3, from/1, to/1]).
--record(delete_acc_tx, {from = 0,
-                        nonce = 0,
-                        fee = 0,
-                        to = 0}).
 -include("../../records.hrl").
 
 from(X) -> X#delete_acc_tx.from.
 to(X) -> X#delete_acc_tx.to.
 make_dict(To, ID, Fee) ->
-    From = trees:dict_tree_get(accounts, ID),
-    ToAcc = trees:dict_tree_get(accounts, To),
+    From = trees:get(accounts, ID),
+    ToAcc = trees:get(accounts, To),
     false = ToAcc == empty,
     #delete_acc_tx{from = ID,
 		   nonce = From#acc.nonce + 1,
@@ -29,8 +27,10 @@ new(To, ID, Fee, Trees) ->
     {Tx, [FromProof, ToProof]}.
 
 go(Tx, Dict, NewHeight, _) ->
+    F20 = forks:get(20),
+    true = NewHeight < F20,
     From = Tx#delete_acc_tx.from,
-    txs:developer_lock(From, NewHeight, Dict),
+    %txs:developer_lock(From, NewHeight, Dict),
     To = Tx#delete_acc_tx.to,
     Nonce = Tx#delete_acc_tx.nonce,
     AccountFee = Tx#delete_acc_tx.fee,

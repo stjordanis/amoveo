@@ -1,8 +1,10 @@
 -module(spk).
--export([new/8, apply_bet/5, get_paid/3, run/6, dict_run/6,
+-export([new/8, apply_bet/5, get_paid/3, dict_run/6,
          chalang_state/3, new_bet/3, new_bet/4, 
 	 is_improvement/4, bet_unlock/2, force_update/3,
          new_ss/2, remove_bet/2, remove_nth/2, 
+         verify_sig/3, sign/2, hash/1,
+         prove_facts/3,
 	 test/0, test2/0
 	]).
 
@@ -14,7 +16,51 @@
 %SPK is where we hold the channel contracts. They are turing complete smart contracts.
 %Besides the SPK, there is the ScriptSig. Both participants of the channel sign the SPK, neither signs the SS.
 
-
+verify_sig(S, Pub1, Pub2) ->
+    X = element(4, S),
+    Z = case X of
+            {2, Sig2} ->
+                %io:fwrite("spk more \n"),
+                {2, Sig1} = element(3, S),
+                %Serialized = sign:serialize(element(2, S)),
+                %H = hash:doit(Serialized),
+                H = hash(element(2, S)),
+                B1 = signing:verify_sig(H, Sig1, Pub1),
+                B2 = signing:verify_sig(H, Sig2, Pub2),
+                %io:fwrite("verify sig: "),
+                %io:fwrite(packer:pack([B1, B2])),
+                %io:fwrite("\n"),
+                B1 and B2;
+                %S2 = setelement(2, S, H),
+                %S3 = setelement(3, S2, Sig1),
+                %setelement(4, S3, Sig2);
+            _ -> signing:verify(S)
+        end.
+    %signing:verify(Z).
+sign(S, N) ->
+    if
+        (element(1, S) == signed) ->
+ %If it already has a old type signature, then do that. Otherwise, make a new type signature.
+            Bool = (is_binary(element(3, S)) or is_binary(element(4, S))),
+            if
+                Bool-> keys:sign(S);
+                true -> sign2(S, N)
+            end;
+        true -> sign2({signed, S, [], []}, N)
+    end.
+hash(X) -> hash:doit(sign:serialize(X)).
+sign2(S, N) -> 
+    {signed, Data, B3, B4} = S,
+    NewData = hash(Data),
+    %io:fwrite("spk sign2\n"),
+    %io:fwrite(packer:pack(Sa1)),
+    %io:fwrite("\n"),
+    Sig = {2, keys:raw_sign(NewData)},
+    case N of
+        1 -> {signed, Data, Sig, B4};
+        2 -> {signed, Data, B3, Sig}
+    end.
+            
 remove_bet(N, SPK) ->
     NewBets = remove_nth(N, SPK#spk.bets),
     B = element(N, list_to_tuple(SPK#spk.bets)),
@@ -30,63 +76,79 @@ remove_nth(N, _) when N < 1 -> 1=2;
 remove_nth(1, [A|B]) -> B;
 remove_nth(N, [A|B]) -> [A|remove_nth(N-1, B)].
 
-prove_facts([], _) ->%we need to return an empty list here.
+prove_facts([], _, _) ->
     compiler_chalang:doit(<<" nil ">>);
-prove_facts(X, Trees) ->
-    A = <<"macro [ nil ;
+prove_facts(X, Dict, Height) ->
+    ListSyntax = <<"macro [ nil ;
 	macro , swap cons ;
 	macro ] swap cons reverse ;
         [">>,
-    B = prove_facts2(X, Trees),
-    compiler_chalang:doit(<<A/binary, B/binary>>).
-prove_facts2([], _) ->
-    <<"]">>;
-prove_facts2([{Tree, Key}|T], Trees) when is_integer(Key)->
-    ID = tree2id(Tree),
-    Branch = trees:Tree(Trees),
-    {_, Data, _} = Tree:get(Key, Branch),
-    SerializedData = Tree:serialize(Data),
-    Size = size(SerializedData),
-    A = "[int " ++ integer_to_list(ID) ++ 
-	", int " ++ integer_to_list(Key) ++%burn and existence store by hash, not by integer.
-	", binary " ++
-	integer_to_list(Size) ++ " " ++
-	binary_to_list(base64:encode(Tree:serialize(Data)))++ 
-	"]",
-    A2 = list_to_binary(A),
-    B = prove_facts2(T, Trees),
-    C = case T of
+    B = prove_facts2(X, Dict, Height),
+    %io:fwrite("prove facts code \n"),
+    %io:fwrite(B),
+    %io:fwrite("\n"),
+    compiler_chalang:doit(<<ListSyntax/binary, B/binary>>).
+prove_facts2([], _, _) -> <<"]">>;
+prove_facts2([{Tree, Key}|T], Dict, Height)->
+    ID = tree2id(Tree, Height),
+    Data = 
+        if
+            (element(1, Dict) == dict) ->%Dict is a dict in ram containing info to process this one block.
+                Tree:dict_get(Key, Dict);
+            true ->%Dict is a trees object containing the entire merkel tree database.
+                Branch = trees:Tree(Dict),
+                {_, Data0, _} = Tree:get(Key, Branch),
+                Data0
+        end,
+    DataPart = 
+        case Data of
+            empty ->
+                F25 = forks:get(25),
+                F48 = forks:get(48),
+                if
+                    Height > F48 ->
+                        ", int4 0 ";
+                    true ->
+                        true = (F25 < Height),
+                        ", int4 0 ]"
+                end;
+                %", int4 0 ";
+            _ ->SD = Tree:serialize(Data),
+                Size = size(SD),
+                ", binary " ++ integer_to_list(Size) ++ " " ++ binary_to_list(base64:encode(SD))
+        end,
+    TypePart = "int4 " ++ integer_to_list(ID),
+    KeyPart = if
+            is_integer(Key) ->
+                    ", int4 " ++ integer_to_list(Key);
+            true -> 
+                    ", binary " ++
+                    integer_to_list(size(Key)) ++ " " ++
+                    binary_to_list(base64:encode(Key))
+        end,
+    Fact = list_to_binary("[" ++ TypePart ++ KeyPart ++ DataPart ++ "]"),
+    C = case T of%if it's the last element of the list, don't put a comma after.
 	    [] -> <<>>;
 	    _ -> <<", ">>
-		     end,
-    <<A2/binary, C/binary, B/binary>>;
-prove_facts2([{Tree, Key}|T], Trees) ->
-    ID = tree2id(Tree),
-    Branch = trees:Tree(Trees),
-    {_, Data, _} = Tree:get(Key, Branch),
-    SerializedData = Tree:serialize(Data),
-    Size = size(SerializedData),
-    A = "[int " ++ integer_to_list(ID) ++ 
-	", binary " ++
-	integer_to_list(size(Key)) ++ " " ++
-	binary_to_list(base64:encode(Key)) ++
-	", binary " ++
-	integer_to_list(Size) ++ " " ++
-	binary_to_list(base64:encode(Tree:serialize(Data)))++ 
-	"]",%this comma is used one too many times.
-    A2 = list_to_binary(A),
-    B = prove_facts2(T, Trees),
-    C = case T of
-	    [] -> <<>>;
-	    _ -> <<", ">>
-		     end,
-    <<A2/binary, C/binary, B/binary>>.
+        end,
+    Rest = prove_facts2(T, Dict, Height),
+    <<Fact/binary, C/binary, Rest/binary>>.
 
-tree2id(accounts) -> 1;
-tree2id(channels) -> 2;
-tree2id(existence) -> 3;
-tree2id(oracles) -> 5;
-tree2id(governance) -> 6.
+
+
+
+
+tree2id(accounts, _) -> 1;
+tree2id(channels, _) -> 2;
+tree2id(existence, _) -> 3;
+tree2id(oracles, _) -> 5;
+tree2id(governance, _) -> 6;
+tree2id(_, Height) -> 
+    F48_active = forks:get(48) < Height,
+    if
+        F48_active -> 0;
+        true -> 1=2
+    end.
 
 new_ss(Code, Prove) ->
     #ss{code = Code, prove = Prove}.
@@ -116,12 +178,12 @@ bet_unlock2([Bet|T], B, A, [SS|SSIn], SSOut, Secrets, Nonce, SSThem) ->
     Key = Bet#bet.key, 
     case secrets:read(Key) of
 	<<"none">> -> 
-            io:fwrite("no secret known\n"),
+            %io:fwrite("no secret known\n"),
 	    bet_unlock2(T, [Bet|B], A, SSIn, [SS|SSOut], Secrets, Nonce, [SS|SSThem]);
 	{SS2, Amount} -> 
 	    %Just because a bet is removed doesn't mean all the money was transfered. We should calculate how much of the money was transfered.
-            io:fwrite("we have a secret\n"),
-	    io:fwrite(packer:pack(SS2)),% the browswer is making it look like this: {[{<<"code">>,[2,0,0,0,32,98,87,250,109,44,40,33,174,78,71,84,176,34,104,226,87,251,254,27,121,249,5,18,185,76,16,255,4,134,1,189,94]},{<<"prove">>,[]},{<<"meta">>,[]}]}
+            %io:fwrite("we have a secret\n"),
+	    %io:fwrite(packer:pack(SS2)),% the browswer is making it look like this: {[{<<"code">>,[2,0,0,0,32,98,87,250,109,44,40,33,174,78,71,84,176,34,104,226,87,251,254,27,121,249,5,18,185,76,16,255,4,134,1,189,94]},{<<"prove">>,[]},{<<"meta">>,[]}]}
 %in erlang it makes: {ss, <<binary>>, [], 0}
             TP = tx_pool:get(),
             Trees = TP#tx_pool.block_trees,
@@ -131,16 +193,18 @@ bet_unlock2([Bet|T], B, A, [SS|SSIn], SSOut, Secrets, Nonce, SSThem) ->
 	    {ok, VarLimit} = application:get_env(amoveo_core, var_limit),
 	    {ok, BetGasLimit} = application:get_env(amoveo_core, bet_gas_limit),
 	    true = chalang:none_of(SS2#ss.code),
-	    F = prove_facts(SS#ss.prove, Trees),
+	    F = prove_facts(SS#ss.prove, Trees, Height),
 	    C = Bet#bet.code,
 	    Code = <<F/binary, C/binary>>,
-	    Data = chalang:data_maker(BetGasLimit, BetGasLimit, VarLimit, FunLimit, SS2#ss.code, Code, State, constants:hash_size()),
+	    Data = data_maker(BetGasLimit, BetGasLimit, VarLimit, FunLimit, SS2#ss.code, Code, State, constants:hash_size(), Height),
 	    Data2 = chalang:run5(SS2#ss.code, Data),
 	    Data3 = chalang:run5(Code, Data2),
 	    case Data3 of
-		{error, _E} -> 
+		{error, E} -> 
 		    io:fwrite("spk bet unlock, ss doesn't work\n"),
 		    io:fwrite(packer:pack(SS2)),
+		    io:fwrite("\n"),
+		    io:fwrite(packer:pack(E)),
 		    io:fwrite("\n"),
                     %io:fwrite("spk bet_unlock2 chalang run third\n"),
 		    Data4 = chalang:run5(SS#ss.code, Data),
@@ -151,6 +215,9 @@ bet_unlock2([Bet|T], B, A, [SS|SSIn], SSOut, Secrets, Nonce, SSThem) ->
 			    io:fwrite("bet unlock2 ERROR"),
 			    bet_unlock2(T, [Bet|B], A, SSIn, [SS|SSOut], Secrets, Nonce, [SS|SSThem]);
 			Z -> 
+                            io:fwrite("spk bet unlock, ss1 is :"),
+                            io:fwrite(packer:pack(SS)),
+                            io:fwrite("\n"),
 			    bet_unlock3(Z, T, B, A, Bet, SSIn, SSOut, SS, Secrets, Nonce, SSThem)
 		    end;
 		X -> 
@@ -163,13 +230,18 @@ bet_unlock2([Bet|T], B, A, [SS|SSIn], SSOut, Secrets, Nonce, SSThem) ->
 	    end
     end.
 bet_unlock3(Data5, T, B, A, Bet, SSIn, SSOut, SS2, Secrets, Nonce, SSThem) ->
-    io:fwrite("spk bet_unlock3\n"),
+    %io:fwrite("spk bet_unlock3\n"),
     [<<ContractAmount0:32>>, <<Nonce2:32>>, <<Delay:32>>|_] = chalang:stack(Data5),
    if
         Delay > 0 ->
 	   io:fwrite("delay is "),
 	   io:fwrite(integer_to_list(Delay)),
-	   io:fwrite("delay >0, keep the bet.\n"),
+	   io:fwrite(". Delay >0, keep the bet.\n"),
+	   io:fwrite("nonce .\n"),
+	   io:fwrite(integer_to_list(Nonce2)),
+	   io:fwrite("amount .\n"),
+	   io:fwrite(integer_to_list(ContractAmount0)),
+	   io:fwrite("\n"),
 	   bet_unlock2(T, [Bet|B], A, SSIn, [SS2|SSOut], Secrets, Nonce, [SS2|SSThem]);
        true -> 
 	   CGran = constants:channel_granularity(),
@@ -211,88 +283,56 @@ dict_run(Mode, SS, SPK, Height, Slash, Dict) ->
     {Amount + SPK#spk.amount, NewNonce + SPK#spk.nonce, Delay}.
 %dict_run2(fast, SS, SPK, State, Dict) ->
 dict_run2(_, SS, SPK, State, Dict) ->
-    FunLimit = governance:dict_get_value(fun_limit, Dict),
-    VarLimit = governance:dict_get_value(var_limit, Dict),
+    {FunLimit, VarLimit} = 
+        if
+            (element(1, Dict) == dict) ->
+                {governance:dict_get_value(fun_limit, Dict),
+                 governance:dict_get_value(var_limit, Dict)};
+            true ->
+                Governance = trees:governance(Dict),
+                {governance:get_value(fun_limit, Governance),
+                 governance:get_value(var_limit, Governance)}
+        end,
     true = is_list(SS),
     Bets = SPK#spk.bets,
     Delay = SPK#spk.delay,
-    run(SS, 
-	Bets,
-	SPK#spk.time_gas,
-	SPK#spk.space_gas,
-	FunLimit,
-	VarLimit,
-	State, 
-	Delay);
-dict_run2(safe, SS, SPK, State, Dict) -> %unused.
-    %will not crash. if the thread that runs the code crashes, or takes too long, then it returns {-1,-1,-1,-1}
-    S = self(),
-    spawn(fun() ->
-		  X = dict_run2(fast, SS, SPK, State, Dict),
-		  S ! X
-	  end),
-    spawn(fun() ->
-                  {ok, A} = application:get_env(amoveo_core, smart_contract_runtime_limit),
-		  timer:sleep(A),%wait enough time for the chalang contracts to finish
-		  S ! error
-	  end),
-    receive 
-	Z -> Z
-    end.
-    
-run(Mode, SS, SPK, Height, Slash, Trees) ->
-    State = chalang_state(Height, Slash, Trees),
-    {Amount, NewNonce, Delay, _} = run2(Mode, SS, SPK, State, Trees),
-    {Amount + SPK#spk.amount, NewNonce + SPK#spk.nonce, Delay}.
-run2(fast, SS, SPK, State, Trees) -> 
-    Governance = trees:governance(Trees),
-    FunLimit = governance:get_value(fun_limit, Governance),
-    VarLimit = governance:get_value(var_limit, Governance),
-    true = is_list(SS),
-    Bets = SPK#spk.bets,
-    Delay = SPK#spk.delay,
-    run(SS, 
-	Bets,
-	SPK#spk.time_gas,
-	SPK#spk.space_gas,
-	FunLimit,
-	VarLimit,
-	State, 
-	Delay);
-run2(safe, SS, SPK, State, Trees) -> 
-    %will not crash. if the thread that runs the code crashes, or takes too long, then it returns {-1,-1,-1,-1}
-    S = self(),
-    spawn(fun() ->
-		  X = run2(fast, SS, SPK, State, Trees),
-		  S ! X
-	  end),
-    spawn(fun() ->
-		  timer:sleep(5000),%wait enough time for the chalang contracts to finish
-		  S ! error
-	  end),
-    receive 
-	Z -> Z
-    end.
+    dict_run(SS, 
+             Bets,
+             SPK#spk.time_gas,
+             SPK#spk.space_gas,
+             FunLimit,
+             VarLimit,
+             State, 
+             Delay,
+             Dict).
 chalang_state(Height, Slash, _) ->	    
     chalang:new_state(Height, Slash, 0).
-run(ScriptSig, Codes, OpGas, RamGas, Funs, Vars, State, SPKDelay) ->
-    run(ScriptSig, Codes, OpGas, RamGas, Funs, Vars, State, 0, 0, SPKDelay).
-
-run([], [], OpGas, _, _, _, _, Amount, Nonce, Delay) ->
+dict_run(ScriptSig, Codes, OpGas, RamGas, Funs, Vars, State, SPKDelay, Dict) ->
+    dict_run(ScriptSig, Codes, OpGas, RamGas, Funs, Vars, State, 0, 0, SPKDelay, Dict).
+dict_run([], [], OpGas, _, _, _, _, Amount, Nonce, Delay, _) ->
     {Amount, Nonce, Delay, OpGas};
-run([SS|SST], [Code|CodesT], OpGas, RamGas, Funs, Vars, State, Amount, Nonce, Delay) ->
+dict_run([SS|SST], [Code|CodesT], OpGas, RamGas, Funs, Vars, State, Amount, Nonce, Delay, Dict) ->
     {A2, N2, Delay2, EOpGas} = 
-	run3(SS, Code, OpGas, RamGas, Funs, Vars, State),
-    run(SST, CodesT, EOpGas, RamGas, Funs, Vars, State, A2+Amount, N2+Nonce, max(Delay, Delay2)).
-run3(SS, Bet, OpGas, RamGas, Funs, Vars, State) ->
+	dict_run3(SS, Code, OpGas, RamGas, Funs, Vars, State, Dict),
+    dict_run(SST, CodesT, EOpGas, RamGas, Funs, Vars, State, A2+Amount, N2+Nonce, max(Delay, Delay2), Dict).
+dict_run3(SS, Bet, OpGas, RamGas, Funs, Vars, State, Dict) ->
     ScriptSig = SS#ss.code,
     true = chalang:none_of(ScriptSig),
-    Trees = (tx_pool:get())#tx_pool.block_trees,
-    %F = prove_facts(Bet#bet.prove, Trees),
-    F = prove_facts(SS#ss.prove, Trees),
+    Height = element(2, State),
+    F21 = forks:get(21),
+    F = if
+            (Height > F21) ->
+                prove_facts(SS#ss.prove, Dict, Height);
+            true ->
+                Trees = (tx_pool:get())#tx_pool.block_trees,
+                prove_facts(SS#ss.prove, Trees, Height)
+        end,
+    %io:fwrite("spk proved facts \n"),
+    %io:fwrite(packer:pack(F)),
+    %io:fwrite("\n"),
     C = Bet#bet.code,
     Code = <<F/binary, C/binary>>,  
-    Data = chalang:data_maker(OpGas, RamGas, Vars, Funs, ScriptSig, Code, State, constants:hash_size()),
+    Data = data_maker(OpGas, RamGas, Vars, Funs, ScriptSig, Code, State, constants:hash_size(), Height),
     {Amount0, Nonce, Delay, Data2} = chalang_error_handling(ScriptSig, Code, Data),
     CGran = constants:channel_granularity(),
     
@@ -302,6 +342,7 @@ run3(SS, Bet, OpGas, RamGas, Funs, Vars, State) ->
     {A3, Nonce, Delay,
      chalang:time_gas(Data2)
     }.
+
 force_update(SPK, SSOld, SSNew) ->
     F = tx_pool:get(),
     Trees = F#tx_pool.block_trees,
@@ -312,10 +353,10 @@ force_update(SPK, SSOld, SSNew) ->
     if 
 	not(L == L2) -> false;
 	true ->
-	    {_, NonceOld,  _} =  run(fast, SSOld, SPK, Height, 0, Trees),
+	    {_, NonceOld,  _} =  dict_run(fast, SSOld, SPK, Height, 0, Trees),
 						%{_, NonceOld,  _} =  dict_run(fast, SSOld, SPK, Height, 0, Dict),
 						%we can't use dict here, because not all the information we need is stored in the dict.
-	    {_, NonceNew,  _} =  run(fast, SSNew, SPK, Height, 0, Trees),
+	    {_, NonceNew,  _} =  dict_run(fast, SSNew, SPK, Height, 0, Trees),
 						%{_, NonceNew,  _} =  dict_run(fast, SSNew, SPK, Height, 0, Dict),
 	    if
 		NonceNew >= NonceOld ->
@@ -337,10 +378,10 @@ force_update2([Bet|BetsIn], [SS|SSIn], BetsOut, SSOut, Amount, Nonce) ->
     {ok, VarLimit} = application:get_env(amoveo_core, var_limit),
     {ok, BetGasLimit} = application:get_env(amoveo_core, bet_gas_limit),
     true = chalang:none_of(SS#ss.code),
-    F = prove_facts(SS#ss.prove, Trees),
+    F = prove_facts(SS#ss.prove, Trees, Height),
     C = Bet#bet.code,
     Code = <<F/binary, C/binary>>,
-    Data = chalang:data_maker(BetGasLimit, BetGasLimit, VarLimit, FunLimit, SS#ss.code, Code, State, constants:hash_size()),
+    Data = data_maker(BetGasLimit, BetGasLimit, VarLimit, FunLimit, SS#ss.code, Code, State, constants:hash_size(), Height),
     {ContractAmount, N, Delay, _} = chalang_error_handling(SS#ss.code, Code, Data),
     if
 	%Delay > 50 ->
@@ -366,8 +407,8 @@ is_improvement(OldSPK, OldSS, NewSPK, NewSS) ->
     TG = NewSPK#spk.time_gas,
     true = SG =< SpaceLimit,
     true = TG =< TimeLimit,
-    {_, Nonce2, Delay2} =  run(fast, NewSS, NewSPK, Height, 0, BlockTrees),
-    {_, Nonce1, _} =  run(fast, OldSS, OldSPK, Height, 0, BlockTrees),
+    {_, Nonce2, Delay2} =  dict_run(fast, NewSS, NewSPK, Height, 0, BlockTrees),
+    {_, Nonce1, _} =  dict_run(fast, OldSS, OldSPK, Height, 0, BlockTrees),
     io:fwrite("spk is improvement "),
     io:fwrite(packer:pack([Nonce1, Nonce2, NewSS, OldSS])),
     io:fwrite("\n"),
@@ -382,14 +423,18 @@ is_improvement(OldSPK, OldSS, NewSPK, NewSS) ->
     %true = Delay2 =< MaxChannelDelay,
 	    Amount2 = NewSPK#spk.amount,
 	    Amount1 = OldSPK#spk.amount,
-	    NewSPK = OldSPK#spk{bets = Bets2,
-				space_gas = SG,
-				time_gas = TG,
-				amount = Amount2,
-				nonce = NewSPK#spk.nonce},
-	    CID = NewSPK#spk.cid,
-	    <<_:256>> = CID,
-	    Channel = trees:dict_tree_get(channels, CID),
+	    NewSPK = OldSPK#spk{
+                       bets = Bets2,
+                       space_gas = SG,
+                       time_gas = TG,
+                       amount = Amount2,
+                       nonce = NewSPK#spk.nonce},
+            
+	    CID0 = NewSPK#spk.cid,
+            Acc1_0 = NewSPK#spk.acc1,
+	    <<_:256>> = CID0,
+            CID = new_channel_tx:salted_id(CID0, Acc1_0),
+	    Channel = trees:get(channels, CID),
 	    KID = keys:pubkey(),
 	    Acc1 = channels:acc1(Channel),
 	    Acc2 = channels:acc2(Channel),
@@ -456,16 +501,17 @@ obligations(2, [A|T]) ->
 	    true -> 0
 	end,
     C + obligations(2, T).
-vm(SS, State) ->
-    {ok, TimeLimit} = application:get_env(amoveo_core, time_limit),
-    {ok, SpaceLimit} = application:get_env(amoveo_core, space_limit),
-    {ok, FunLimit} = application:get_env(amoveo_core, fun_limit),
-    {ok, VarLimit} = application:get_env(amoveo_core, var_limit),
-    chalang:vm(SS, TimeLimit, SpaceLimit, FunLimit, VarLimit, State).
+%vm(SS, State) ->
+%    {ok, TimeLimit} = application:get_env(amoveo_core, time_limit),
+%    {ok, SpaceLimit} = application:get_env(amoveo_core, space_limit),
+%    {ok, FunLimit} = application:get_env(amoveo_core, fun_limit),
+%    {ok, VarLimit} = application:get_env(amoveo_core, var_limit),
+%    chalang:vm(SS, TimeLimit, SpaceLimit, FunLimit, VarLimit, State).
 -define(error_amount, 0).
--define(error_nonce, 10000000).
+-define(error_delay, 10000000).
+-define(error_nonce, 0).
 chalang_error_handling(SS, Code, Data) ->
-    Default = {?error_amount, 0, ?error_nonce, Data},
+    Default = {?error_amount, ?error_nonce, ?error_delay, Data},
     case chalang:run5(SS, Data) of
         {error, S} ->
             io:fwrite("script sig has an error when executed: "),
@@ -508,24 +554,32 @@ test2() ->
     TP = tx_pool:get(),
     Trees = TP#tx_pool.block_trees,
     Height = TP#tx_pool.height,
-    run(fast, SSME, SPK, Height, 0, Trees).
+    dict_run(fast, SSME, SPK, Height, 0, Trees).
 test() ->
     %test prove_facts.
     BlockTrees = (tx_pool:get())#tx_pool.block_trees,
     Pub = constants:master_pub(),
     GovID = 2,
-    Code = prove_facts([{governance, GovID},{accounts, Pub}], BlockTrees),
+    Height = block:height(),
+    Code = prove_facts([{governance, GovID},{accounts, Pub}], BlockTrees, Height),
     State = chalang_state(1, 0, BlockTrees),
     [[[<<6:32>>, <<GovID:32>>, Gov5], %6th tree is governance. 5th thing is "delete channel reward"
       [<<1:32>>, BPub, Acc1]]] = %1st tree is accounts. 1 is for account id 1.
 	chalang:vm(Code, 100000, 100000, 1000, 1000, State),
-    Govern5 = trees:dict_tree_get(governance, GovID),
-    Account1 = trees:dict_tree_get(accounts, constants:master_pub()),
+    Govern5 = trees:get(governance, GovID),
+    Account1 = trees:get(accounts, constants:master_pub()),
     %io:fwrite(packer:pack([governance:deserialize(Gov5), Govern5])),
     %[-6,["gov",2,1100,0],889981]
     Acc1 = accounts:serialize(Account1),
     %Govern5 = governance:element(3, governance:deserialize(Gov5)),
     %Gov5 = governance:serialize(Govern5),
     success.
-    
-    
+ 
+data_maker(A, B, C, D, E, F, G, H, Height) ->    
+    F22 = forks:get(22),
+    Version = if
+                  (Height > F22) -> 1;
+                  true -> 0
+              end,
+    Verbose = false,
+    chalang:data_maker(A, B, C, D, E, F, G, H, Version, Verbose).

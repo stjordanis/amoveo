@@ -1,3 +1,14 @@
+WARNING
+========
+
+this is an old expired version of the documentation.
+
+Please use the new documentation instead. 
+
+Here is the main page for the new documentation: https://github.com/zack-bitcoin/amoveo-docs 
+
+And [here is the link for the newest version of the page you are currently looking at](https://github.com/zack-bitcoin/amoveo-docs/blob/master//design/programmable_state_channels.md)
+
 # Programmable State Channels
 
 A programmable state channel is a mechanism invented by Zack Hess that allows the blockchain to enforce a smart contract without storing any of the code that makes up the smart contract.
@@ -27,3 +38,15 @@ Without markets, any smart contract inside of a state-channel will either be vul
 Any time you want to change the amount of any currency in a channel, you need to do an on-chain transaction. Having to do so much on-chain reduces the utility of channels.
 
 [Discuss this on Reddit](https://www.reddit.com/r/Amoveo/comments/73hdf7/programmable_state_channels_explained/)
+
+This is the VM for state channel smart contracts in Amoveo https://github.com/zack-bitcoin/chalang
+
+It has a couple compilers.
+
+You can see a market for derivatives being run completely off-chain in state channels here: http://159.89.87.58:8080/explorer.html
+It is being used as futarchy to decide how to upgrade Amoveo.
+It matches trades in single-price batches.
+
+Almost all state channel smart contracts will need to be integrated into markets like these.
+The only exceptions are perfectly symmetrical contracts.
+If a contract isn’t symmetric, then you need a market to determine the price of participating in the contract.

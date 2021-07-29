@@ -4,7 +4,7 @@
 from(X) -> X#spend.from.
 to(X) -> X#spend.to. 
 make_dict(To, Amount, Fee, From) ->
-    Acc = trees:dict_tree_get(accounts, From),
+    Acc = trees:get(accounts, From),
     #spend{from = From, nonce = Acc#acc.nonce + 1, to = To, amount = Amount, fee = Fee}.
 	    
 make(To, Amount, Fee, From, Trees) ->
@@ -19,7 +19,7 @@ go(Tx, Dict, NewHeight, NonceCheck) ->
         N -> N = version:doit(NewHeight)
     end,
     From = Tx#spend.from,
-    txs:developer_lock(From, NewHeight, Dict),
+    %txs:developer_lock(From, NewHeight, Dict),
     To = Tx#spend.to,
     false = From == To,
     A = Tx#spend.amount,
@@ -28,7 +28,8 @@ go(Tx, Dict, NewHeight, NonceCheck) ->
 		NonceCheck -> Tx#spend.nonce;
 		true -> none
 	    end,
-    Facc = accounts:dict_update(From, Dict, -A-Tx#spend.fee, Nonce),
+    Facc = accounts:dict_update(
+             From, Dict, -A-Tx#spend.fee, Nonce),
     Tacc = accounts:dict_update(To, Dict, A, none),
     Dict2 = accounts:dict_write(Facc, Dict),
     accounts:dict_write(Tacc, Dict2).

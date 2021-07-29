@@ -27,20 +27,31 @@ start_internal() ->
                  ]}]),
     %Port = application:get_env(amoveo_core, internal_port, ?DEFAULT_INTERNAL_PORT),
     {ok, Port} = application:get_env(amoveo_core, internal_port),
-    {ok, _} = cowboy:start_http(http_internal, 100,
-                                [{ip, {127, 0, 0, 1}}, {port, Port}],
-                                [{env, [{dispatch, Dispatch}]}]),
+    
+    {ok, IP} = application:get_env(amoveo_core, internal_ip),
+    %{ok, _} = cowboy:start_http(http_internal, 100,
+    %                            [{ip, IP}, {port, Port}],
+    %                            [{env, [{dispatch, Dispatch}]}]),%,
+    {ok, _} = cowboy:start_clear(http_internal, 
+				 [{ip, IP}, {port, Port}], 
+				 #{env => #{dispatch => Dispatch}}),
+    %{compress, true}]),
     ok.
 
 start_external() ->
     Dispatch =
         cowboy_router:compile(
-          [{'_', [{"/:file", ext_file_handler, []},
+          [{'_', [{"/ext/:file", get_api_handler, []},
+		  {"/:file", ext_file_handler, []},
                   {"/", ext_handler, []}
                  ]}]),
     {ok, Port} = application:get_env(amoveo_core, port),
-    {ok, _} = cowboy:start_http(http, 100,
-                                [{ip, {0, 0, 0, 0}}, {port, Port}],
-                                [{env, [{dispatch, Dispatch}]}]),
+    {ok, IP} = application:get_env(amoveo_core, external_ip),
+    %{ok, _} = cowboy:start_http(http, 100,
+    %                            [{ip, IP}, {port, Port}],
+    %                            [{env, [{dispatch, Dispatch}]}]),
+    {ok, _} = cowboy:start_clear(http,
+				 [{ip, IP}, {port, Port}],
+				 #{env => #{dispatch => Dispatch}}),
     ok.
 

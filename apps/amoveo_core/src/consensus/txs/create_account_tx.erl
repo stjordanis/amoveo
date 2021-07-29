@@ -7,7 +7,7 @@ make_dict(Pub, Amount, Fee, From) ->
     PS = size(Pub),
     PS = size(From),
     PS = constants:pubkey_size(),
-    Account = trees:dict_tree_get(accounts, From),
+    Account = trees:get(accounts, From),
     #create_acc_tx{from = From,
 		   nonce = Account#acc.nonce + 1,
 		   pubkey = Pub,
@@ -28,7 +28,7 @@ new(Pub, Amount, Fee, From, Trees) -> %To is a new ID. set it to any unused ID.
     {Tx, [Proof]}.
 go(Tx, Dict, NewHeight, NonceCheck) ->
     From = Tx#create_acc_tx.from,
-    txs:developer_lock(From, NewHeight, Dict),
+    %txs:developer_lock(From, NewHeight, Dict),
     Pub = Tx#create_acc_tx.pubkey,
     Amount = Tx#create_acc_tx.amount,
     true = (Amount > (-1)),
@@ -37,7 +37,7 @@ go(Tx, Dict, NewHeight, NonceCheck) ->
 		true -> none
 	    end,
     AccountFee = Tx#create_acc_tx.fee,
-    empty = accounts:dict_get(Pub, Dict),
+    empty = accounts:dict_get(Pub, Dict, NewHeight),
     Account = accounts:dict_update(From, Dict, -Amount - AccountFee, Nonce),
     NewAccount = accounts:new(Pub, Amount),
     Dict2 = accounts:dict_write(Account, Dict),

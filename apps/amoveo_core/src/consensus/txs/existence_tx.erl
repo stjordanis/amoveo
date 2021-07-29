@@ -1,6 +1,7 @@
+%unused
+
 -module(existence_tx).
 -export([go/4, make/4, make_dict/3, from/1, commit/1]).
--record(ex, {from, nonce = 0, fee = 0, commit = 0}).
 -include("../../records.hrl").
 
 from(X) -> X#ex.from.
@@ -8,7 +9,7 @@ commit(X) -> X#ex.commit.
 make_dict(From, Fee, Data) ->
     true = is_binary(Data),
     32 = size(Data),
-    Acc = trees:dict_tree_get(accounts, From),
+    Acc = trees:get(accounts, From),
     Nonce = Acc#acc.nonce + 1,
     #ex{from = From,fee=Fee,nonce=Nonce,commit=Data}.
 make(From, Fee, Data, Trees) ->
@@ -20,6 +21,8 @@ make(From, Fee, Data, Trees) ->
     Tx = #ex{from = From,fee=Fee,nonce=Nonce,commit=Data},
     {Tx, [Proof]}.
 go(Tx, Dict, NewHeight, NonceCheck) ->
+    F20 = forks:get(20),
+    true = NewHeight < F20,
     From = Tx#ex.from,
     C = Tx#ex.commit,
     D = existence:new(C, NewHeight),

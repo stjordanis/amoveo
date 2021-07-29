@@ -8,6 +8,7 @@
 %We keep a record of the blocks with the heighest accumulative difficulty so that we know what we will need to prune.
 %If a fork starts from before fork_tolerance, then it would be growing from a block that is not recorded in this module. Since the data is pruned, you would be unable to maintain the database. So the node would freeze, and you would have to either restart syncing from the genesis block, or download and verify all the consensus data you don't have from the fork.
 init(ok) -> 
+    %io:fwrite("start recent_blocks"),
     process_flag(trap_exit, true),
     X = db:read(?LOC),
     Ka = if 
@@ -28,8 +29,16 @@ handle_call({add, Hash, TotalWork, Height}, _, X) ->
     R=if
           (TotalWork > X#r.work) and (Height > 0) and ((Height rem RBP) == 0) ->
               {ok, FT} = application:get_env(amoveo_core, fork_tolerance),%we should look up the forth torlerance'th ancestor of the block, it's accumulative difficulty is the value we want. not Height-FT
-              AB = block:get_by_height(max(0, Height - FT)),
-              {ok, H} = headers:read(block:hash(AB)),
+              %H = block:header_by_height(max(0, Height-FT)),
+              HeightCheck = max(0, Height-FT),
+              AB = block:get_by_height(HeightCheck),
+              H = case AB of
+                      error -> headers:recent_header(HeightCheck);
+                      _ ->
+                      
+                          {ok, Header} = headers:read(block:hash(AB)),
+                          Header
+                  end,
               AncestorsWork = H#header.accumulative_difficulty,
 	      BS = lists:sort(fun(A, B) -> 
 				      {_, A1} = A,
@@ -44,7 +53,7 @@ handle_call({add, Hash, TotalWork, Height}, _, X) ->
               X#r{blocks = [{Hash, TotalWork}|X#r.blocks]};
           true -> X 
       end,
-    db:save(?LOC, R),
+    %db:save(?LOC, R),
     {reply, ok, R};
 handle_call(read, _From, X) -> 
     Y = get_hashes(X#r.blocks),

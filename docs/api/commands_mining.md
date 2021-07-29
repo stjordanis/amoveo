@@ -1,3 +1,14 @@
+WARNING
+========
+
+this is an old expired version of the documentation.
+
+Please use the new documentation instead. 
+
+Here is the main page for the new documentation: https://github.com/zack-bitcoin/amoveo-docs 
+
+And [here is the link for the newest version of the page you are currently looking at](https://github.com/zack-bitcoin/amoveo-docs/blob/master//api/commands_mining.md)
+
 #### Mining
 
 [There is better mining software available here](https://github.com/zack-bitcoin/amoveo-c-miner)
@@ -29,7 +40,12 @@ block:hashrate_estimate().
 block:hashes_per_block().
 ```
 
+To mine a block:
+```
+api:mine_block().
+```
 
+<!----
 
 The mining software integrated into the full node is useful for testing, and as a reference implementation. This is not a profitable miner.
 
@@ -49,3 +65,4 @@ to check if you are currently mining:
 ```
 mine:status().
 ```
+----->

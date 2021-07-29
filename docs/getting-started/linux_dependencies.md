@@ -1,3 +1,14 @@
+WARNING
+========
+
+this is an old expired version of the documentation.
+
+Please use the new documentation instead. 
+
+Here is the main page for the new documentation: https://github.com/zack-bitcoin/amoveo-docs 
+
+And [here is the link for the newest version of the page you are currently looking at](https://github.com/zack-bitcoin/amoveo-docs/blob/master//getting-started/linux_dependencies.md)
+
 First you have to install the dependencies. This depends on your Linux distribution. If unsure you can try `lsb_release -d` to check your distribution.
 
 Then install dependencies using the instructions for your distribution:
@@ -9,7 +20,7 @@ Finally proceed to [instructions after dependencies](#after-dependencies)
 
 ## For Ubuntu
 
-1. Make sure that that you are running Ubuntu 16 or later:
+1. Make sure that that you are running Ubuntu 18 or later:
 
     (earlier versions of ubuntu requires manually installing the latest version of erlang, because the package manager installs an old version)
 
@@ -29,7 +40,7 @@ Finally proceed to [instructions after dependencies](#after-dependencies)
 
 3. Install following dependencies:
    ```
-   sudo apt-get install erlang libncurses5-dev libssl-dev unixodbc-dev g++ git erlang-base-hipe make
+   sudo apt install erlang-asn1 erlang-public-key erlang-ssl erlang-inets erlang-jiffy erlang-dev erlang-base-hipe libncurses5-dev libssl-dev unixodbc-dev g++ git make python
    ```
 
 ## For ArchLinux
@@ -111,12 +122,12 @@ OpenSuSE requires manual compilation and instalation of Erlang.
 
 ## After Dependencies
 
-Next, download Amoveo Testnet. You should run following steps with a non-root user, for better security.
+Next, download Amoveo. You should run following steps with a non-root user, for better security.
 
 ```
 git clone https://github.com/zack-bitcoin/amoveo.git
 ```
-Now you can go into the directory, and compile the Amoveo testnet.
+Now you can go into the directory, and compile Amoveo.
 
 ```
 cd amoveo/

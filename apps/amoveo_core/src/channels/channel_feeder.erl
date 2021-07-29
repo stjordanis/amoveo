@@ -9,7 +9,8 @@
 	 make_locked_payment/3, they_simplify/3,
 	 bets_unlock/1, trade/5, trade/7,
          cancel_trade/4, cancel_trade_server/3,
-         combine_cancel_assets_server/2
+         combine_cancel_assets_server/2,
+	 contract_market/10
 	 ]).
 -include("../records.hrl").
 new_cd(Me, Them, SSMe, SSThem, CID, Expiration) ->
@@ -27,20 +28,29 @@ handle_cast(garbage, X) ->
     {noreply, X};
 handle_cast({new_channel, Tx, SSPK, Expires}, X) ->
     %a new channel with our ID was just created on-chain. We should record an empty SPK in this database so we can accept channel payments.
-    SPK = testnet_sign:data(SSPK),
+    SPK = signing:data(SSPK),
+    Height = block:height(),
+    F29 = forks:get(29),
+    CID0 = new_channel_tx:cid(Tx),
+    CID = if
+              (Height > F29) ->
+                 new_channel_tx:salted_id(Tx);
+              true -> CID0
+          end,
+                  
     CD = #cd{me = SPK, them = SSPK, cid = new_channel_tx:cid(Tx), expiration = Expires},
     channel_manager:write(other(Tx), CD),
     {noreply, X};
 handle_cast({close, SS, STx}, X) ->
     %closing the channel at it's current SPK
-    Tx = testnet_sign:data(STx),
+    Tx = signing:data(STx),
     OtherID = other(Tx),
     {ok, CD} = channel_manager:read(OtherID),
     true = CD#cd.live,
     SPKM = CD#cd.me,
     A1 = SPKM#spk.acc1, 
     A2 = SPKM#spk.acc2,
-    SPK = testnet_sign:data(CD#cd.them),
+    SPK = signing:data(CD#cd.them),
     A3 = channel_team_close_tx:acc1(Tx),
     A4 = channel_team_close_tx:acc2(Tx),
     K = keys:pubkey(),
@@ -76,9 +86,9 @@ handle_call({combine_cancel_assets, TheirPub, IP, Port}, _From, X) ->
     Msg = {combine_cancel_assets, keys:pubkey(), SSPK},
     Msg = packer:unpack(packer:pack(Msg)),
     {ok, SSPK2} = talker:talk(Msg, IP, Port),
-    true = testnet_sign:verify(keys:sign(SSPK2)),
-    SPK = testnet_sign:data(SSPK),
-    SPK = testnet_sign:data(SSPK2),
+    true = signing:verify(keys:sign(SSPK2)),
+    SPK = signing:data(SSPK),
+    SPK = signing:data(SSPK2),
     NewCD = OldCD#cd{them = SSPK2, me = SPK,
                      ssme = NewSS, ssthem = NewSS},
     channel_manager:write(TheirPub, NewCD),
@@ -86,12 +96,12 @@ handle_call({combine_cancel_assets, TheirPub, IP, Port}, _From, X) ->
 handle_call({combine_cancel_assets_server, TheirPub, SSPK2}, _From, X) ->
     {ok, OldCD} = channel_manager:read(TheirPub),
     {SSPK, NewSS} = combine_cancel_common(OldCD),
-    SPK = testnet_sign:data(SSPK),
-    SPK2 = testnet_sign:data(SSPK2),
+    SPK = signing:data(SSPK),
+    SPK2 = signing:data(SSPK2),
     io:fwrite("combine cancel assets spks should match\n"),
-    io:fwrite(packer:pack(SPK)),
+    io:fwrite(packer:pack(SPK)),%didn't close any bets
     io:fwrite("\n"),
-    io:fwrite(packer:pack(SPK2)),
+    io:fwrite(packer:pack(SPK2)),%closes 2 bets. this is correct. This was generated in javascript.
     io:fwrite("\n"),
     SPK = SPK2,
     Bets = (OldCD#cd.me)#spk.bets,
@@ -102,14 +112,18 @@ handle_call({combine_cancel_assets_server, TheirPub, SSPK2}, _From, X) ->
 handle_call({cancel_trade_server, N, TheirPub, SSPK2}, _From, X) ->
     {ok, OldCD} = channel_manager:read(TheirPub),
     SSPK = cancel_trade_common(N, OldCD), 
-    SPK = testnet_sign:data(SSPK),
-    SPK2 = testnet_sign:data(SSPK2),
+    SPK = signing:data(SSPK),
+    SPK2 = signing:data(SSPK2),
     SPK = SPK2,
     Bets = (OldCD#cd.me)#spk.bets,
     Bet = element(N-1, list_to_tuple(Bets)),
     {Type, Price} = Bet#bet.meta,
     CodeKey = Bet#bet.key,
-    {market, 1, _, _, _, _, OID} = CodeKey,
+    OID = case CodeKey of
+	      {market, 1, _, _, _, _, Z} -> Z;
+	      {market, 2, _, _, _, _, Y, _, _, _} -> Y
+	  end,
+    %{market, 1, _, _, _, _, OID} = CodeKey,
     NewCD = OldCD#cd{them = SSPK2, me = SPK,
                      ssme = spk:remove_nth(N-1, OldCD#cd.ssme),
                      ssthem = spk:remove_nth(N-1, OldCD#cd.ssthem)},
@@ -127,9 +141,9 @@ handle_call({cancel_trade, N, TheirPub, IP, Port}, _From, X) ->
     Msg = {cancel_trade, keys:pubkey(), N, SSPK},
     Msg = packer:unpack(packer:pack(Msg)),
     {ok, SSPK2} = talker:talk(Msg, IP, Port),
-    true = testnet_sign:verify(keys:sign(SSPK2)),
-    SPK = testnet_sign:data(SSPK),
-    SPK = testnet_sign:data(SSPK2),
+    true = signing:verify(keys:sign(SSPK2)),
+    SPK = signing:data(SSPK),
+    SPK = signing:data(SSPK2),
     NewCD = OldCD#cd{them = SSPK2, me = SPK,
                      ssme = spk:remove_nth(N-1, OldCD#cd.ssme),
                      ssthem = spk:remove_nth(N-1, OldCD#cd.ssthem)},
@@ -138,7 +152,15 @@ handle_call({cancel_trade, N, TheirPub, IP, Port}, _From, X) ->
 handle_call({trade, ID, Price, Type, Amount, OID, SSPK, Fee}, _From, X) ->%id is an account pubkey
     TP = tx_pool:get(),
     Height = TP#tx_pool.height,
-    true = testnet_sign:verify(keys:sign(SSPK)),
+    io:fwrite("channel feeder trade\n"),
+    io:fwrite(packer:pack(SSPK)),
+    io:fwrite("\n"),
+    io:fwrite(packer:pack(keys:sign(SSPK))),
+    io:fwrite("\n"),
+    io:fwrite("channel feeder serialized\n"),
+    io:fwrite(base64:encode(sign:serialize(signing:data(SSPK)))),
+    io:fwrite("\n"),
+    true = signing:verify(keys:sign(SSPK)),%breaks here
     true = Amount > 0,
     {ok, LF} = application:get_env(amoveo_core, lightning_fee),
     true = Fee > LF,
@@ -146,22 +168,28 @@ handle_call({trade, ID, Price, Type, Amount, OID, SSPK, Fee}, _From, X) ->%id is
     {ok, OB} = order_book:data(OID),
     Expires = order_book:expires(OB),
     Period = order_book:period(OB),
-    BetLocation = constants:oracle_bet(),
-    SC = market:market_smart_contract(BetLocation, OID, Type, Expires, Price, keys:pubkey(), Period, Amount, OID, Height),
-    %CodeKey = market:market_smart_contract_key(OID, Expires, keys:pubkey(), Period, OID),
+    OBData = order_book:ob_type(OB),
+    SC = contract_market(OBData, OID, Type, Expires, Price, keys:pubkey(), Period, Amount, OID, Height),
+    %BetLocation = constants:oracle_bet(),
+    %SC = market:market_smart_contract(BetLocation, OID, Type, Expires, Price, keys:pubkey(), Period, Amount, OID, Height),
     {ok, OldCD} = channel_manager:read(ID),
     ChannelExpires = OldCD#cd.expiration,
     true = Expires < ChannelExpires,%The channel has to be open long enough for the market to close.
-    SSPK2 = trade(Amount, Price, SC, ID, OID),
-    SPK = testnet_sign:data(SSPK),
-    SPK2 = testnet_sign:data(SSPK2),
+    SSPK2 = trade(Amount, Price, SC, ID, OID),%bad
+    SPK = signing:data(SSPK),
+    SPK2 = signing:data(SSPK2),%bad
     io:fwrite("channel feeder spks \n"),
-    io:fwrite(packer:pack(SPK)),
+    io:fwrite(packer:pack(SPK)), %bet amount 500
     io:fwrite("\n"),
-    io:fwrite(packer:pack(SPK2)),
+    io:fwrite(packer:pack(SPK2)), %bet amount 750
     io:fwrite("\n"),
     SPK = SPK2,
-    DefaultSS = market:unmatched(OID),
+    DefaultSS = 
+        case OBData of
+            {binary} -> market:unmatched(OID);
+            {scalar, _, _, _} ->
+                lisp_scalar:unmatched(OID)
+        end,
     SSME = [DefaultSS|OldCD#cd.ssme],
     SSThem = [DefaultSS|OldCD#cd.ssthem],
     %Dict = TP#tx_pool.dict,
@@ -169,7 +197,7 @@ handle_call({trade, ID, Price, Type, Amount, OID, SSPK, Fee}, _From, X) ->%id is
     %spk:dict_run(fast, SSThem, SPK, Height, 0, Dict),%sanity test
     NewCD = OldCD#cd{them = SSPK, me = SPK, 
 		     ssme = SSME, ssthem = SSThem},
-    Channel = trees:dict_tree_get(channels, NewCD#cd.cid),
+    Channel = trees:get(channels, NewCD#cd.cid),
     SPKAmount = SPK#spk.amount,
     BetAmount = api:sum_bets(SPK#spk.bets),
     true = 0 < (channels:bal1(Channel) + SPKAmount),
@@ -178,18 +206,18 @@ handle_call({trade, ID, Price, Type, Amount, OID, SSPK, Fee}, _From, X) ->%id is
     {reply, keys:sign(SSPK), X};
 handle_call({lock_spend, SSPK, Amount, Fee, Code, Sender, Recipient, ESS}, _From, X) ->
 %giving us money conditionally, and asking us to forward it with a similar condition to someone else.
-    true = testnet_sign:verify(keys:sign(SSPK)),
+    true = signing:verify(keys:sign(SSPK)),
     true = Amount > 0,
     {ok, LightningFee} = application:get_env(amoveo_core, lightning_fee),
     true = Fee > LightningFee,
     Return = make_locked_payment(Sender, Amount+Fee, Code),
-    SPK = testnet_sign:data(SSPK),%first is from them
-    SPK22 = testnet_sign:data(Return),
+    SPK = signing:data(SSPK),%first is from them
+    SPK22 = signing:data(Return),
     io:fwrite("lock spend compare spks "),
     io:fwrite(packer:pack([SPK, SPK22])),
     SPK = SPK22,
     {ok, OldCD} = channel_manager:read(Sender),
-    OldSPK = testnet_sign:data(OldCD#cd.them),
+    OldSPK = signing:data(OldCD#cd.them),
     %Use OldSPK to see if they have enough money to make this payment.
     NewCD = OldCD#cd{them = SSPK, me = SPK, 
 		     ssme = [spk:new_ss(<<>>, [])|OldCD#cd.ssme],
@@ -198,15 +226,15 @@ handle_call({lock_spend, SSPK, Amount, Fee, Code, Sender, Recipient, ESS}, _From
     arbitrage:write(Code, [Sender, Recipient]),
     Channel2 = make_locked_payment(Recipient, -Amount, Code),
     {ok, OldCD2} = channel_manager:read(Recipient),
-    NewCD2 = OldCD2#cd{me = testnet_sign:data(Channel2),
+    NewCD2 = OldCD2#cd{me = signing:data(Channel2),
 		       ssme = [spk:new_ss(<<>>, [])|OldCD2#cd.ssme],
 		       emsg = [ESS|OldCD2#cd.emsg]},
     channel_manager:write(Recipient, NewCD2),
     {reply, Return, X};
 handle_call({spend, SSPK, Amount}, _From, X) ->
 %giving us money in the channel.
-    true = testnet_sign:verify(keys:sign(SSPK)),
-    SPK = testnet_sign:data(SSPK),
+    true = signing:verify(keys:sign(SSPK)),
+    SPK = signing:data(SSPK),
     Other = other(SPK),
     {ok, OldCD} = channel_manager:read(Other),
     true = OldCD#cd.live,
@@ -219,7 +247,7 @@ handle_call({spend, SSPK, Amount}, _From, X) ->
 handle_call({update_to_me, SSPK, From}, _From, X) ->
     %this updates our partner's side of the channel state to include the bet that we already included.
     MyID = keys:pubkey(),
-    SPK = testnet_sign:data(SSPK),
+    SPK = signing:data(SSPK),
     Acc1 = SPK#spk.acc1,
     Acc2 = SPK#spk.acc2,
     From = case MyID of
@@ -227,7 +255,7 @@ handle_call({update_to_me, SSPK, From}, _From, X) ->
 	Acc2 -> Acc1;
 	X -> X = Acc1
     end,	
-    true = testnet_sign:verify(keys:sign(SSPK)),
+    true = signing:verify(keys:sign(SSPK)),
     {ok, OldCD} = channel_manager:read(From),
     if
 	SPK == OldCD#cd.me -> ok;
@@ -248,9 +276,9 @@ handle_call({they_simplify, From, ThemSPK, CD}, _FROM, X) ->
     true = CD0#cd.live,
     SPKME = CD0#cd.me,
     SSME = CD0#cd.ssme,
-    true = testnet_sign:verify(keys:sign(ThemSPK)),
+    true = signing:verify(keys:sign(ThemSPK)),
     true = CD#cd.live,
-    NewSPK = testnet_sign:data(ThemSPK),
+    NewSPK = signing:data(ThemSPK),
     NewSPK = CD#cd.me,
     SS = CD#cd.ssme,
     SS4 = CD#cd.ssthem,%is this wrong?
@@ -279,8 +307,8 @@ handle_call({they_simplify, From, ThemSPK, CD}, _FROM, X) ->
 			Return;
 		    true ->
 			{SS5, Return} = simplify_helper(From, SS4),%this should get rid of one of the bets. %using spk:bet_unlock/2
-			SPK = testnet_sign:data(ThemSPK),
-			SPK2 = testnet_sign:data(Return),
+			SPK = signing:data(ThemSPK),
+			SPK2 = signing:data(Return),
 			SPK = SPK2,
 			Data = new_cd(SPK, ThemSPK, SS5, SS5, CID, CD#cd.expiration),
 			channel_manager:write(From, Data),
@@ -361,7 +389,7 @@ depth_check2(SPK, C, OldC) ->
 	true -> neither
     end.
 other(X) when element(1, X) == signed ->
-    other(testnet_sign:data(X));
+    other(signing:data(X));
 other(SPK) when element(1, SPK) == spk ->
     other(SPK#spk.acc1, SPK#spk.acc2);
 other(Tx) when element(1, Tx) == ctc ->
@@ -404,12 +432,12 @@ make_locked_payment(To, Amount, Code) ->
 trade(Amount, Price, Bet, Other, _OID) ->
     {ok, CD} = channel_manager:read(Other),
     SPK = CD#cd.me,
-    CID = SPK#spk.cid,
+    %CID = SPK#spk.cid,
     {ok, TimeLimit} = application:get_env(amoveo_core, time_limit),
     {ok, SpaceLimit} = application:get_env(amoveo_core, space_limit),
     CGran = constants:channel_granularity(),
     A = (Amount * Price) div CGran,
-    SPK2 = spk:apply_bet(Bet, -A, SPK, TimeLimit div 10 , SpaceLimit),
+    SPK2 = spk:apply_bet(Bet, -A, SPK, TimeLimit , SpaceLimit),
     keys:sign(SPK2).
 cancel_trade_common(N, OldCD) ->
     SPK = OldCD#cd.me,
@@ -418,17 +446,28 @@ cancel_trade_common(N, OldCD) ->
     SPK2 = spk:remove_bet(N-1, SPK),
     SPK3 = SPK2#spk{nonce = SPK2#spk.nonce + 1000000},
     keys:sign(SPK3).
-matchable(Bet, SS) ->
+matchable(Bet, SS) ->%combine-cancelable.
+    io:fwrite("matchable\n"),
     SSC = SS#ss.code,
     BK = Bet#bet.key,
     {Direction, Price} = Bet#bet.meta,
     Price2 = SS#ss.meta,
     if 
-        SSC == <<0,0,0,0,4>> -> false; %unmatched.
-        not(size(BK) == 7) -> false; %not a market contract
-        not(element(1, BK) == market) -> false; %not a market contract
-        not(element(2, BK) == 1) -> false; %not a standard market contract
-        Price2 == Price -> false; %bet is only partially matched.
+        SSC == <<0,0,0,0,4>> -> 
+	    io:fwrite("unmatched open order cannot be combine canceled.\n"),
+	    false; %unmatched open order cannot be combine canceled.
+        ((not(size(BK) == 7)) and (not(size(BK) == 9)))-> 
+	    io:fwrite("not a market contract.\n"),
+	    false; %not a market contract
+        not(element(1, BK) == market) -> 
+	    io:fwrite("not a market contract 2.\n"),
+	    false; %not a market contract
+        ((not(element(2, BK) == 1)) and (not(element(2, BK) == 2)))-> 
+	    io:fwrite("not a standard market type.\n"),
+	    false; %not a standard market contract
+        Price2 == Price -> 
+	    io:fwrite("bet is partially matched"),
+	    false; %bet is only partially matched.
         true -> true
     end.
 combine_cancel_common(OldCD) ->
@@ -486,7 +525,8 @@ combine_cancel_common4(Bet, SSM, [BH|BT], [MH|MT], BO, MO) ->
              lists:reverse([MH|MT]) ++ MO};
         not(B) or
         not(OID == OID2) or %must be same market to match
-        (Direction1 == Direction2) -> %must be opposite directions to match
+        (Direction1 == Direction2) or %must be opposite directions to match
+	not(element(2, Key1) == element(2, Key2)) -> %must be same kind of market to match
             io:fwrite("not matchable or different oracle, or different direction \n"),
             combine_cancel_common4(Bet, SSM, BT, MT, [BH|BO], [MH|MO]);
         true -> 
@@ -507,9 +547,11 @@ combine_cancel_common4(Bet, SSM, [BH|BT], [MH|MT], BO, MO) ->
             end
     end.
 bets_unlock(X) -> 
+    %io:fwrite("bets unlock\n"),
     bets_unlock2(X, []).
 bets_unlock2([], Out) -> Out;
 bets_unlock2([ID|T], OutT) ->
+    %io:fwrite("bets unlock2\n"),
     {ok, CD0} = channel_manager:read(ID),
     true = CD0#cd.live,
     SPKME = CD0#cd.me,
@@ -519,3 +561,16 @@ bets_unlock2([ID|T], OutT) ->
     channel_manager:write(ID, NewCD),
     Out = {Secrets, SPK},
     bets_unlock2(T, [Out|OutT]).
+
+contract_market(OBData, MarketID, Type, Expires, Price, Pubkey, Period, Amount, OID, Height) ->
+    case OBData of
+	{scalar, LL, UL, OracleStartHeight} -> 
+	    %BetLocation = constants:scalar_oracle_bet(),
+	    %scalar_market:market_smart_contract(BetLocation, MarketID, Type, Expires, Price, Pubkey, Period, Amount, OID, Height, LL, UL);
+            lisp_scalar:market_smart_contract(OID, Type, Expires, Price, Pubkey, Period, Amount, OID, Height, LL, UL, OracleStartHeight);
+	{binary} ->
+	    BetLocation = constants:oracle_bet(),
+	    market:market_smart_contract(BetLocation, MarketID, Type, Expires, Price, Pubkey, Period, Amount, OID, Height)
+    end.
+
+    

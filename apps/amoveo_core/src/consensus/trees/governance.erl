@@ -1,19 +1,19 @@
 -module(governance).
--export([tree_number_to_value/1, max/1, is_locked/1, genesis_state/0, name2number/1, %custom for this tree
+-export([tree_number_to_value/1, max/1, is_locked/1, genesis_state/0, name2number/1, number2name/1,%custom for this tree
 	 get_value/2, get/2, write/2,%update tree stuff
-         dict_get/2,dict_write/2, dict_get_value/2, dict_lock/2, dict_unlock/2, dict_change/3, %update dict stuff
+         dict_get/2,dict_get/3,dict_write/2, dict_get_value/2, dict_lock/2, dict_unlock/2, dict_change/3, %update dict stuff
          verify_proof/4,make_leaf/3,key_to_int/1,
 	 serialize/1,deserialize/1,
-	 new/2, dict_write/2,
+	 new/2,
 	 test/0]).%common tree stuff
--record(gov, {id, value, lock}).
 -define(name, governance).
 -define(fee, constants:encoded_fee()).
 -include("../../records.hrl").
 genesis_state() ->
     {MinimumOracleTime, MaximumOracleTime, BlockPeriod} =
         case application:get_env(amoveo_core, test_mode, false) of
-            true -> {1, 1, 250};
+            %true -> {1, 1, 100};
+	    true -> {1, 1, 5};
             false -> {352, 505, 550}
         end,
     G = [[block_reward, 1620],
@@ -43,7 +43,8 @@ genesis_state() ->
          [oracle_close, ?fee],
          [unmatched, ?fee],
          [oracle_winnings, ?fee]],
-    {ok, GenesisTree} = genesis_state(G, 1),
+    R = trees:empty_tree(governance),
+    {ok, GenesisTree} = genesis_state(G, R),
     GenesisTree.
 
 genesis_state([], Tree) ->
@@ -148,7 +149,9 @@ name2number(create_acc_tx) -> 14;%these store the minimum fee for each transacti
 name2number(spend) -> 15;
 name2number(delete_acc_tx) -> 16;
 name2number(nc) -> 17;
+name2number(nc_accept) -> 17;
 name2number(ctc) -> 18;
+name2number(ctc2) -> 18;
 name2number(csc) -> 19;
 name2number(timeout) -> 20;
 name2number(cs) -> 21;
@@ -159,10 +162,75 @@ name2number(oracle_close) -> 25;
 name2number(unmatched) -> 26;
 name2number(oracle_winnings) -> 27;
 name2number(oracle_question_liquidity) -> 28;
+name2number(contract_new_tx) -> 29;
+name2number(contract_use_tx) -> 30;
+name2number(sub_spend_tx) -> 31;
+name2number(contract_evidence_tx) -> 32;
+name2number(contract_timeout_tx) -> 33;
+name2number(contract_winnings_tx) -> 34;
+name2number(contract_simplify_tx) -> 35;
+name2number(max_contract_flavors) -> 36;
+name2number(swap_tx) -> 37;
+name2number(market_new_tx) -> 38;
+name2number(market_liquidity_tx) -> 39;
+name2number(market_swap_tx) -> 40;
+name2number(market_trading_fee) -> 41;
+name2number(swap_tx2) -> 42;
+name2number(trade_cancel_tx) -> 43;
+name2number(stablecoin_new_tx) -> 44;
 name2number(X) -> 
     io:fwrite(X),
     1=2,
     throw(invalid_governance_atom).
+number2name(1) -> block_reward;
+number2name(2) -> developer_reward;
+number2name(3) -> max_block_size;
+number2name(4) -> block_period;
+number2name(5) -> time_gas;
+number2name(6) -> space_gas;
+number2name(7) -> fun_limit;
+number2name(8) -> var_limit;
+number2name(9) -> governance_change_limit;
+number2name(10) -> oracle_initial_liquidity;
+number2name(11) -> minimum_oracle_time;
+number2name(12) -> maximum_oracle_time;
+number2name(13) -> maximum_question_size;
+number2name(14) -> create_acc_tx;
+number2name(15) -> spend;
+number2name(16) -> delete_acc_tx;
+number2name(17) -> nc;
+number2name(18) -> ctc;
+number2name(19) -> csc;
+number2name(20) -> timeout;
+number2name(21) -> cs;
+number2name(22) -> ex;
+number2name(23) -> oracle_new;
+number2name(24) -> oracle_bet;
+number2name(25) -> oracle_close;
+number2name(26) -> unmatched;
+number2name(27) -> oracle_winnings;
+number2name(28) -> oracle_question_liquidity;
+number2name(29) -> contract_new_tx;
+number2name(30) -> contract_use_tx;
+number2name(31) -> sub_spend_tx;
+number2name(32) -> contract_evidence_tx;
+number2name(33) -> contract_timeout_tx;
+number2name(34) -> contract_winnings_tx;
+number2name(35) -> contract_simplify_tx;
+number2name(36) -> max_contract_flavors;
+number2name(37) -> swap_tx;
+number2name(38) -> market_new_tx;
+number2name(39) -> market_liquidity_tx;
+number2name(40) -> market_swap_tx;
+number2name(41) -> market_trading_fee;
+number2name(42) -> swap_tx2;
+number2name(43) -> trade_cancel_tx;
+number2name(44) -> stablecoin_new_tx;
+number2name(X) ->
+    io:fwrite(X),
+    1=2,
+    error.
+    
 max(Height) -> 
     B = Height > forks:get(5),
     if 
@@ -201,6 +269,7 @@ deserialize(SerializedGov) ->
 
 dict_get_value(Key, Dict) when ((Key == timeout) or (Key == delete_acc_tx)) ->
     case dict_get(Key, Dict) of
+	error -> error;
 	empty -> empty;
 	Gov ->
 	    V = Gov#gov.value,
@@ -208,18 +277,23 @@ dict_get_value(Key, Dict) when ((Key == timeout) or (Key == delete_acc_tx)) ->
     end;
 dict_get_value(Key, Dict) ->
     case dict_get(Key, Dict) of
+	error -> error;
 	empty -> empty;
 	Gov ->
 	    V = Gov#gov.value,
 	    tree_number_to_value(V)
     end.
-dict_get(Key, Dict) when is_integer(Key) ->
+dict_get(Key0, Dict) ->
+    dict_get(Key0, Dict, 0).
+dict_get(Key0, Dict, Height) ->
+    Key = if
+              is_integer(Key0) -> Key0;
+              true -> name2number(Key0)
+          end,
     case dict:find({governance, Key}, Dict) of
 	error -> empty;
 	{ok, X} -> deserialize(X)
-    end;
-dict_get(Key, Dict) ->
-    dict_get(name2number(Key), Dict).
+    end.
 
 
 %% Tests

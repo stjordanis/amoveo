@@ -1,24 +1,35 @@
 -module(channel_slash_tx).
--export([go/4, make/5, make_dict/4, is_tx/1, from/1, id/1]).
--record(cs, {from, nonce, fee = 0, 
-	     scriptpubkey, scriptsig}).
+-export([go/4, make/5, make_dict/4, is_tx/1, from/1, id/1, to_prove/2, to_prove_helper/2]).
+%-record(cs, {from, nonce, fee = 0, 
+%	     scriptpubkey, scriptsig}).
 -include("../../records.hrl").
+to_prove(X, Height) ->
+    to_prove_helper(X#cs.scriptsig, Height).
+to_prove_helper(SS, Height) ->
+    F21 = forks:get(21),
+    if
+        Height > F21 ->
+            SS2 = lists:map(fun(X) -> X#ss.prove end, SS),
+            SS3 = lists:foldr(fun(X, Y) -> X++Y end, [], SS2),
+            SS3;
+        true -> []
+    end.
 from(X) -> X#cs.from.
 id(X) -> 
     SPK = X#cs.scriptpubkey,
-    (testnet_sign:data(SPK))#spk.cid.
+    (signing:data(SPK))#spk.cid.
 is_tx(Tx) ->
     is_record(Tx, cs).
 make_dict(From, Fee, ScriptPubkey, ScriptSig) ->
-    SPK = testnet_sign:data(ScriptPubkey),
+    SPK = signing:data(ScriptPubkey),
     CID = SPK#spk.cid,
     T = governance,
-    GTG = trees:dict_tree_get(T, time_gas),
-    GSG = trees:dict_tree_get(T, space_gas),
+    GTG = trees:get(T, time_gas),
+    GSG = trees:get(T, space_gas),
     true = SPK#spk.time_gas < GTG,
     true = SPK#spk.time_gas < GSG,
-    Acc = trees:dict_tree_get(accounts, From),
-    Channel = trees:dict_tree_get(channels, CID),
+    Acc = trees:get(accounts, From),
+    Channel = trees:get(channels, CID),
     Acc1 = channels:acc1(Channel),
     Acc2 = channels:acc2(Channel),
     #cs{from = From, nonce = Acc#acc.nonce + 1, 
@@ -30,7 +41,7 @@ make(From, Fee, ScriptPubkey, ScriptSig, Trees) ->
     Governance = trees:governance(Trees),
     Accounts = trees:accounts(Trees),
     Channels = trees:channels(Trees),
-    SPK = testnet_sign:data(ScriptPubkey),
+    SPK = signing:data(ScriptPubkey),
     CID = SPK#spk.cid,
     true = SPK#spk.time_gas < governance:get_value(time_gas, Governance),
     true = SPK#spk.space_gas < governance:get_value(space_gas, Governance),
@@ -52,26 +63,33 @@ make(From, Fee, ScriptPubkey, ScriptSig, Trees) ->
 go(Tx, Dict, NewHeight, NonceCheck) ->
     From = Tx#cs.from,
     SignedSPK = Tx#cs.scriptpubkey,
-    SPK = testnet_sign:data(SignedSPK),
+    SPK = signing:data(SignedSPK),
     CID = SPK#spk.cid,
     OldChannel = channels:dict_get(CID, Dict),
+    0 = channels:closed(OldChannel),
     LM = channels:last_modified(OldChannel),
     true = LM < NewHeight,
-    true = testnet_sign:verify(SignedSPK),
     Acc1 = channels:acc1(OldChannel),
     Acc2 = channels:acc2(OldChannel),
+    true = spk:verify_sig(SignedSPK, Acc1, Acc2),%%
+    %true = signing:verify(SignedSPK),%%
     Acc1 = SPK#spk.acc1,
-    Acc2 = SPK#spk.acc2,
+    %Acc2 = SPK#spk.acc2,
     Fee = Tx#cs.fee,
     Nonce = if
 		NonceCheck -> Tx#cs.nonce;
 		true -> none
 	    end,
-    {Amount, NewCNonce, Delay} = spk:dict_run(fast, Tx#cs.scriptsig, SPK, NewHeight, 1, Dict),
+    {Amount0, NewCNonce, Delay} = spk:dict_run(fast, Tx#cs.scriptsig, SPK, NewHeight, 1, Dict),
+    F15 = forks:get(15),
+    CB1OC = channels:bal1(OldChannel),
+    CB2OC = channels:bal2(OldChannel),
+    Amount = if
+                 NewHeight > F15 -> min(CB1OC, max(-CB2OC, Amount0));
+                 true -> Amount0
+             end,
     CNOC = channels:nonce(OldChannel),
-    NewChannel = channels:dict_update(CID, Dict, NewCNonce, 0, 0, Amount, Delay, NewHeight, false), 
-    CB1OC = channels:bal1(NewChannel),
-    CB2OC = channels:bal2(NewChannel),
+    NewChannel = channels:dict_update(CID, Dict, NewCNonce, Amount, Delay, NewHeight, false), 
     Dict2 = if
 		(((NewCNonce > CNOC) and
 		  (-1 < (CB1OC-Amount))) and

@@ -1,3 +1,14 @@
+WARNING
+========
+
+this is an old expired version of the documentation.
+
+Please use the new documentation instead. 
+
+Here is the main page for the new documentation: https://github.com/zack-bitcoin/amoveo-docs 
+
+And [here is the link for the newest version of the page you are currently looking at](https://github.com/zack-bitcoin/amoveo-docs/blob/master//getting-started/build_intro.md)
+
 
 Requirements for Amoveo installation cover ```Erlang/OTP (18+)``` and its dependencies, and [these dependencies](/docs/getting-started/dependencies.md)
 
@@ -142,8 +153,7 @@ You can also clean all 3 at once
 
 
 ### Blockchain Commands
-
-[Read about the commands in depth in the docs](docs/api/commands.md)
+[Read the blockchain terminal interface commands docs](../api/commands.md) for a deeper dive into using the blockchain terminal commands to interface with the blockchain basics, accounts, lookup history, accounts, lookup history, channels, oracles, markets and other interesting functionality.
 
 
 #### Sync with the network
@@ -152,21 +162,6 @@ To sync with the network and download the blockchain:
 sync:start().
 ```
 
-#### Mining
-After fresh install, one can start mining.
-
-To start mining with all CPU cores: 
-```
-mine:start().
-```
-To stop mining:
-```
-mine:stop().
-```
-to check if you are currently mining:
-```
-mine:status().
-```
 
 #### Spend
 ```
@@ -177,4 +172,5 @@ api:spend(To, Amount).
 #### Learn more
 
 If you want to know more, go to the Amoveo Reddit, and see if someone else asked your question. https://www.reddit.com/r/Amoveo
+
 

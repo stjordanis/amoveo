@@ -1,17 +1,29 @@
 -module(channel_solo_close).
--export([go/4, make/5, make_dict/4, from/1, id/1]).
--record(csc, {from, nonce, fee = 0, 
-	      scriptpubkey, scriptsig}).
+-export([go/4, make/5, make_dict/4, from/1, id/1, to_prove/2]).
+%-record(csc, {from, nonce, fee = 0, 
+%	      scriptpubkey, scriptsig}).
 -include("../../records.hrl").
+%to_prove(X, Height) ->
+%    F21 = forks:get(21),
+%    if
+%        Height > F21 ->
+%            SS = X#csc.scriptsig,
+%            SS2 = lists:map(fun(X) -> X#ss.prove end, SS),
+%            SS3 = lists:foldr(fun(X, Y) -> X++Y end, [], SS2),
+%            SS3;
+%        true -> []
+%    end.
 from(X) -> X#csc.from.
+to_prove(X, Height) ->
+    channel_slash_tx:to_prove_helper(X#csc.scriptsig, Height).
 id(X) -> 
     SPK = X#csc.scriptpubkey,
-    (testnet_sign:data(SPK))#spk.cid.
+    (signing:data(SPK))#spk.cid.
 make_dict(From, Fee, ScriptPubkey, ScriptSig) ->
     true = is_list(ScriptSig),
-    CID = (testnet_sign:data(ScriptPubkey))#spk.cid,
+    CID = (signing:data(ScriptPubkey))#spk.cid,
     <<_:256>> = CID,
-    Acc = trees:dict_tree_get(accounts, From),
+    Acc = trees:get(accounts, From),
     #csc{from = From, nonce = Acc#acc.nonce+1, 
 	 fee = Fee,
 	 scriptpubkey = ScriptPubkey, 
@@ -21,7 +33,7 @@ make(From, Fee, ScriptPubkey, ScriptSig, Trees) ->
     Accounts = trees:accounts(Trees),
     Channels = trees:channels(Trees),
     true = is_list(ScriptSig),
-    CID = (testnet_sign:data(ScriptPubkey))#spk.cid,
+    CID = (signing:data(ScriptPubkey))#spk.cid,
     <<_:256>> = CID,
     {_, Acc, Proof1} = accounts:get(From, Accounts),
     {_, _Channel, Proofc} = channels:get(CID, Channels),
@@ -35,21 +47,35 @@ make(From, Fee, ScriptPubkey, ScriptSig, Trees) ->
 go(Tx, Dict, NewHeight, NonceCheck) ->
     From = Tx#csc.from, 
     SPK = Tx#csc.scriptpubkey,
-    ScriptPubkey = testnet_sign:data(SPK),
+    ScriptPubkey = signing:data(SPK),
     TimeGas = governance:dict_get_value(time_gas, Dict),
     SpaceGas = governance:dict_get_value(space_gas, Dict),
     true = ScriptPubkey#spk.time_gas < TimeGas,
     true = ScriptPubkey#spk.space_gas < SpaceGas,
-    CID = (testnet_sign:data(SPK))#spk.cid,
+    CID = (signing:data(SPK))#spk.cid,
     OldChannel = channels:dict_get(CID, Dict),
+    0 = channels:closed(OldChannel),
     0 = channels:amount(OldChannel),
-    true = testnet_sign:verify(SPK),
     Acc1 = channels:acc1(OldChannel),
     Acc2 = channels:acc2(OldChannel),
+    true = spk:verify_sig(SPK, Acc1, Acc2),
+    %true = signing:verify(SPK),
     Acc1 = ScriptPubkey#spk.acc1,
-    Acc2 = ScriptPubkey#spk.acc2,
+    %Acc2 = ScriptPubkey#spk.acc2,
     SS = Tx#csc.scriptsig,
-    {Amount, NewCNonce, Delay} = spk:dict_run(fast, SS, ScriptPubkey, NewHeight, 0, Dict),
+    CB1OC = channels:bal1(OldChannel),
+    CB2OC = channels:bal2(OldChannel),
+    F21 = forks:get(21),
+    {Amount0, NewCNonce, Delay} = 
+        if
+            ((NewHeight < F21) and (NewHeight ==  69292)) -> {269988500, 2, 10000000};
+            true -> spk:dict_run(fast, SS, ScriptPubkey, NewHeight, 0, Dict)
+        end,
+    F15 = forks:get(15),
+    Amount = if
+                 NewHeight > F15 -> min(CB1OC, max(-CB2OC, Amount0));
+                 true -> Amount0
+             end,
     %false = Amount == 0,
     CNOC = channels:nonce(OldChannel),
     %io:fwrite("closing channel 0\n"),
@@ -60,9 +86,12 @@ go(Tx, Dict, NewHeight, NonceCheck) ->
     Dict2 = if
 		NewCNonce > CNOC ->
 		    %io:fwrite("closing channel 1\n"),
-		    NewChannel = channels:dict_update(CID, Dict, NewCNonce, 0, 0, Amount, Delay, NewHeight, false),
+		    NewChannel = channels:dict_update(CID, Dict, NewCNonce, Amount, Delay, NewHeight, false),
 		    CB1NC = channels:bal1(NewChannel),
 		    CB2NC = channels:bal2(NewChannel),
+                    %io:fwrite("ch1, ch2, amount (from 1 to 2)\n"),
+                    %io:fwrite(packer:pack([CB1NC, CB2NC, Amount])),
+                    %io:fwrite("\n"),
 		    if 
 			((-1 < (CB1NC-Amount)) and 
 			 (-1 < (CB2NC+Amount))) ->
@@ -92,7 +121,7 @@ dict_check_slash(From, Dict, NewHeight, TheirNonce) ->
 	    {_, CDNonce, _} = 
 		spk:dict_run(fast, 
 			SS,
-			testnet_sign:data(SPK),
+			signing:data(SPK),
 			NewHeight, 1, Dict),
 	    if
 		CDNonce > TheirNonce ->
@@ -109,7 +138,7 @@ wait_block(X, SPK, SS) ->
             wait_block(X, SPK, SS)
     end.
 slash_it(SPK, SS) ->
-    GovCost = trees:dict_tree_get(governance, cs),
+    GovCost = trees:get(governance, cs),
     {ok, TxFee} = application:get_env(amoveo_core, tx_fee),
     Tx = channel_slash_tx:make_dict(keys:pubkey(), TxFee + GovCost, keys:sign(SPK), SS),
     Stx = keys:sign(Tx),

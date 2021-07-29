@@ -2,12 +2,13 @@
 -module(peers).
 -behaviour(gen_server).
 -export([start_link/0,code_change/3,handle_call/3,
-         handle_cast/2,handle_info/2,init/1,terminate/2]).
+         handle_cast/2,handle_info/2,init/1,terminate/2,
+         remove_all/0]).
 
 %% API
 -export([
 	 my_ip/0,%my_ip(all())
-	 my_ip/1,%tells your ip address
+	 %my_ip/1,%tells your ip address
          add/1, %Add a Peer 
          remove/1, %Remove a Peer
          all/0, %Get list of all Peers
@@ -22,10 +23,14 @@ init(ok) ->
     %erlang:send_after(1000, self(), set_initial_peers),
     spawn(fun() ->
 		  timer:sleep(1000),
-		  {ok, Peers} = application:get_env(amoveo_core, peers),
+		  %{ok, Peers} = application:get_env(amoveo_core, peers),
+                  Peers = case application:get_env(amoveo_core, peers) of
+                              {ok, P} -> P;
+                              undefined -> []
+                          end,
 		  {ok, Port} = application:get_env(amoveo_core, port),
 		  add(Peers),
-		  IP = my_ip:get(),
+		  IP = my_ip(),
 		  if
 		      IP == empty -> ok;
 		      true -> add({IP, Port})
@@ -72,34 +77,47 @@ add([{IP, Port}|T]) when ((size(IP) == 4) or (size(IP) == 16)) ->
     spawn(fun() ->
 		  add({IP, Port})
 	  end),
+    %timer:sleep(100),
     add(T);
 add([MalformedPeer|T]) ->
     io:fwrite("tried to add malformed peer, skipping."),
     io:fwrite(packer:pack(MalformedPeer)),
     add(T);
-add({{10, _, _, _}, Port}) -> ok;%these formats are only for private networks, not the public internet.
-add({{192, 168, _, _}, Port}) -> ok;
-add({{172, X, _, _}, Port}) when ((X < 32) and (X > 15))-> ok;
+%add({{10, _, _, _}, _Port}) -> ok;%these formats are only for private networks, not the public internet.
+add({{0, 0, 0, 0}, _Port}) -> ok;
+%add({{192, 168, _, _}, _Port}) -> ok;
+%add({{172, X, _, _}, Port}) when ((X < 32) and (X > 15))-> ok;
 add({IP, Port}) -> 
-    %io:fwrite("adding a peer to the list of peers. "),
-    %io:fwrite(packer:pack(IP)),
-    %io:fwrite("\n"),
     NIP = if
               is_tuple(IP) -> IP;
               is_list(IP) -> list_to_tuple(IP)
           end,
     B = blacklist_peer:check({NIP, Port}),
     if
-	B -> ok;
+	B -> 
+            %io:fwrite("blacklisted"),
+            ok;
 	true ->
-	    V = version:doit(block:height()),
-	    %case talker:talk({test, -1}, {NIP, Port}) of
 	    case talker:talk({height}, {NIP, Port}) of
-		bad_peer -> blacklist_peer:add({NIP, Port});
-		error -> blacklist_peer:add({NIP, Port});
-		%{ok, V} -> gen_server:cast(?MODULE, {add, {NIP, Port}});
-		%_ -> blacklist_peer:add({NIP, Port})
-		_ -> gen_server:cast(?MODULE, {add, {NIP, Port}})
+		bad_peer -> 
+                    %io:fwrite("bad peer\n"),
+                    blacklist_peer:add({NIP, Port});
+		error -> 
+                    io:fwrite("error peer\n"),
+                    blacklist_peer:add({NIP, Port});
+		{ok, H} -> 
+                    V = version:doit(H),
+                    case talker:talk({test, -1}, {NIP, Port}) of %eventually change to {version}, once most of the fullnodes update their apis.
+                        {ok, V} ->
+                            gen_server:cast(?MODULE, {add, {NIP, Port}});
+                        _ ->
+                            %io:fwrite("peer on different blockchain\n"),
+                            blacklist_peer:add({NIP, Port})
+                    end;
+                _ ->
+                    %io:fwrite("unknown peer error\n"),
+                    %blacklist_peer:add({NIP, Port})
+                    ok
 	    end
     end.
 
@@ -107,9 +125,9 @@ update(Peer, Properties) ->
     gen_server:cast(?MODULE, {update, Peer, Properties}).
 
 remove(Peer) -> 
-    io:fwrite("removing peer "),
-    io:fwrite(packer:pack(Peer)),
-    io:fwrite("\n"),
+    %io:fwrite("removing peer "),
+    %io:fwrite(packer:pack(Peer)),
+    %io:fwrite("\n"),
     blacklist_peer:add(Peer),
     gen_server:cast(?MODULE, {remove, Peer}).
 
@@ -123,36 +141,15 @@ load_peers([{_,_}=Peer|T], Dict) ->
              _ -> Dict
          end,
     load_peers(T, NewDict).
-my_ip() -> my_ip(peers:all()).
-my_ip([]) ->
-    {ok, X} = inet:getif(),
-    Y = hd(X),
-    element(1, Y);
-my_ip([[A, B]|T]) ->
-    my_ip([{A, B}|T]);
-my_ip([P|T]) ->
-    io:fwrite(packer:pack(P)),
-    io:fwrite("\n"),
-    case talker:talk_timeout({f}, P, 4000) of
-	{ok, MyIP} ->
-	    case MyIP of 
-		{10, _, _, _} -> my_ip(T);
-		{192, 168, _, _} -> my_ip(T);
-		{172, X, _, _} -> 
-		    if
-			((X < 32) and (X > 15)) -> my_ip(T);
-			true -> MyIP
-		    end;
-		{_, _, _, _} -> MyIP;
-		_ -> my_ip(T)
-	    end;
-	X ->  my_ip(T)
-	    %io:fwrite("my_ip issue \n"),
-	    %io:fwrite(packer:pack(X)),
-	    %io:fwrite("\n")
-    end.
-	     
 
+my_ip() ->
+    {ok, Addrs} = inet:getifaddrs(),
+    hd([
+        Addr || {_, Opts} <- Addrs, {addr, Addr} <- Opts,
+                size(Addr) == 4, Addr =/= {127,0,0,1}
+       ]).
 
+remove_all() ->
+    lists:map(fun(P) -> remove(P) end, all()).
 
     

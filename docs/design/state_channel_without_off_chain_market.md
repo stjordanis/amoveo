@@ -1,3 +1,14 @@
+WARNING
+========
+
+this is an old expired version of the documentation.
+
+Please use the new documentation instead. 
+
+Here is the main page for the new documentation: https://github.com/zack-bitcoin/amoveo-docs 
+
+And [here is the link for the newest version of the page you are currently looking at](https://github.com/zack-bitcoin/amoveo-docs/blob/master//design/state_channel_without_off_chain_market.md)
+
 # State channel without off-chain markets
 
 Atomic swaps as invented by TierNolan are very important theoretically. https://en.bitcoin.it/wiki/Atomic_cross-chain_trading
@@ -7,6 +18,8 @@ You can use a similar mechanism to show that exchanging different currencies on 
 Unfortunately, atomic swaps have been worthless practically.
 It only solves half the problem. We don't _just_ want to swap tokens. We want to swap them at the current market price.
 So we also need a decentralized market for matching trades at a market price. The market and the atomic swap need to be trustlessly linked, otherwise the relationship can not be trust-free.
+
+The same problem exists for any smart contract in any state channel. If you need to trust your partner when deciding on the price of the contract, then it doesn't matter if the execution is trust-free. Even a single layer of trust makes the entire contract trustfull. State channels are only useful if each contract is formed in a market to determine the current market price.
 
 Some projects ignore this problem. They don't have off-chain markets, but they put contracts or subcurrencies into channels regardless: Raiden's "instant token swap". Bitcoin Hivemind's channels. Gnosis' channels. Aeternity's proposed state channels. Augur's use of Ox.
 

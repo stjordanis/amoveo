@@ -1,21 +1,25 @@
-
 -module(oracles).
--export([new/7, set_orders/2, orders/1, %custom stuff
+-export([new/9, set_orders/2, orders/1, %custom stuff
          write/2, get/2,%update tree stuff
-         dict_get/2, dict_write/2, dict_write/3, %update dict stuff
+         dict_get/2, dict_get/3, dict_write/2, dict_write/3, %update dict stuff
 	 meta_get/1, deserialize/1, all/0, 
+	 ready_for_bets/0, ready_to_close/0,
+         close_closable/2,
 	 verify_proof/4,make_leaf/3,key_to_int/1,serialize/1,test/0]). %common tree stuff
 -define(name, oracles).
 -include("../../records.hrl").
 orders(X) -> X#oracle.orders.
 set_orders(X, Orders) ->
     X#oracle{orders = Orders, orders_hash = orders:root_hash(Orders)}.
-new(ID, Question, Starts, Creator, GovernanceVar, GovAmount, Dict) ->
+new(ID, Question, Starts, Creator, GovernanceVar, GovAmount, Dict, F10, Height) ->
     <<_:256>> = ID,
     true = size(Creator) == constants:pubkey_size(),
-    Height = api:height(),
+    %Height = api:height(),
     true = (GovernanceVar > -1) and (GovernanceVar < governance:max(Height)),
-    Orders = orders:empty_book(),
+    Orders = if
+		 F10 -> 0;
+		 true -> orders:empty_book()%
+	     end,
     MOT = governance:dict_get_value(minimum_oracle_time, Dict),
     #oracle{id = ID,
 	    result = 0,
@@ -23,9 +27,9 @@ new(ID, Question, Starts, Creator, GovernanceVar, GovAmount, Dict) ->
 	    starts = Starts,
 	    type = 3,%1 means we are storing orders of true, 2 is false, 3 is bad.
 	    orders = Orders,
-            orders_hash = orders:root_hash(Orders),
+            orders_hash = <<0:256>>,
 	    creator = Creator,
-	    done_timer = Starts + MOT,
+	    done_timer = max(Height, Starts) + MOT,
 	    governance = GovernanceVar,
 	    governance_amount = GovAmount
 	   }.
@@ -43,6 +47,54 @@ all() ->
 		     end,
 	      {Text, X}
       end, All).
+ready_to_close() ->
+    A = all(),
+    rtc2(A).
+rtc2([]) -> [];
+rtc2([{Text, Oracle}|T]) ->
+    R = Oracle#oracle.result,
+    D = Oracle#oracle.done_timer,
+    H = block:height(),
+    if
+	(H < D) -> rtc2(T);
+	(not (R == 0)) -> rtc2(T);
+	true -> [{Text, Oracle}|rtc2(T)]
+    end.
+close_closable(N, Pub) ->
+    RTC = ready_to_close(),
+    RTC2 = 
+        lists:sort(fun({_, Oracle1}, {_, Oracle2}) ->
+                           Oracle1#oracle.starts <
+                               Oracle2#oracle.starts
+                   end, RTC),
+    RTC3 = lists:map(fun({_, X}) -> X end, RTC2),
+    Len = length(RTC2),
+    RTC4 = if
+               Len =< N -> RTC3;
+               true -> 
+                   {A, _} = lists:split(N, RTC3),
+                   A
+           end,
+    Txs = 
+        lists:map(fun(X) -> oracle_close_tx:make_dict(
+                              Pub, 0, element(2, X))
+                  end, RTC4),
+    Fee = 151119,
+    multi_tx:make_dict(Pub, Txs, Fee*(length(Txs)+1)).
+    
+ready_for_bets() ->
+    A = all(),
+    rfb2(A).
+rfb2([]) -> [];
+rfb2([{Text, Oracle}|T]) ->
+    R = Oracle#oracle.result,
+    S = Oracle#oracle.starts,
+    H = block:height(),
+    if
+	(H < S) -> rfb2(T);
+	(not (R == 0)) -> rfb2(T);
+	true -> [{Text, Oracle}|rfb2(T)]
+    end.
     
 		      
 serialize(X) ->
@@ -113,10 +165,17 @@ write(Oracle, Root) ->
     Meta = Oracle#oracle.orders,
     trie:put(key_to_int(Key), V, Meta, Root, ?name).
 dict_get(ID, Dict) ->
+    dict_get(ID, Dict, 0).
+dict_get(ID, Dict, Height) ->
     <<_:256>> = ID,
     X = dict:find({oracles, ID}, Dict),
+    B = Height > forks:get(39),
+    C = if
+            B -> error;
+            true -> empty
+        end,
     case X of
-	error -> empty;
+	error -> C;
         {ok, 0} -> empty;
         {ok, {0, _}} -> empty;
         {ok, {Y, Meta}} ->

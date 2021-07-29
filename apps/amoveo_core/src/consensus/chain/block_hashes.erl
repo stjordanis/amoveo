@@ -3,15 +3,16 @@
 %each blockhash is about 32 bytes. We need to prepare for about 10000000 blocks. So that would be 32 megabytes of data. We can keep this all in ram.
 -behaviour(gen_server).
 -export([start_link/0,code_change/3,handle_call/3,handle_cast/2,handle_info/2,init/1,terminate/2, 
-	 add/1,check/1,test/0]).
--record(d, {set, list = []}).
+	 add/1,check/1,second_chance/0,
+	 test/0]).
+-record(d, {set, list = []}).%set is all the hashes
 -define(LOC, constants:block_hashes()).
 init(ok) -> 
     process_flag(trap_exit, true),
+    %io:fwrite("start block_hashes\n"),
     X = db:read(?LOC),
     K = if
 	    X == "" -> #d{set = i_new()};
-	    %i_new();
 	    true -> X
 	end,
     {ok, K}.
@@ -22,19 +23,25 @@ terminate(_, X) ->
     io:format("block_hashes died!"), ok.
 handle_info(_, X) -> {noreply, X}.
 handle_cast(_, X) -> {noreply, X}.
+handle_call(second_chance, _, X) -> 
+    %for every hash stored in the set, check if we are storing a block. If we are not storing a block, then remove it from the set.
+    X2 = second_chance_internal(X),
+    {reply, ok, X2};
 handle_call({add, H}, _From, X) ->
     N = i_insert(H, X#d.set),
     L2 = [H|X#d.list],
     Len = length(L2),
+    {ok, ForkTolerance} = application:get_env(amoveo_core, fork_tolerance),
+    FT = ForkTolerance + 1,
+    FTB = ForkTolerance * 2,
     X2 = if
-	     Len > 500 ->
-		 {NL, T} = lists:split(400, L2),
+	     Len > FTB ->
+		 {NL, T} = lists:split(FT, L2),
 		 NS = remove_many(T, N),
 		 X#d{list = NL, set = NS};
 	     true ->
 		 X#d{list = L2, set = N}
 	 end,
-    db:save(?LOC, X2),%This line is only necessary for power failures
     {reply, ok, X2};
 handle_call({check, H}, _From, X) ->
     B = i_check(H, X#d.set), 
@@ -54,7 +61,30 @@ add(X) ->
 check(X) ->
     true = size(X) == constants:hash_size(),
     gen_server:call(?MODULE, {check, X}).
-
+second_chance() ->
+    gen_server:call(?MODULE, second_chance, 30000).
+second_chance_internal(X) ->
+    L = X#d.list,
+    S = X#d.set,
+    {L2, S2} = sci2(L, [], S),
+    X#d{set = S2, list = L2}.
+sci2([], L2, S2) ->
+    {lists:reverse(L2), S2};
+sci2([H|LI], LO, S) ->
+    %check if we are storing block H. if not, then remove it from the list and the set.
+    {ok, Version} = application:get_env(amoveo_core, db_version),
+    case Version of
+        1 ->
+            case block:get_by_hash(H) of
+                empty -> sci2(LI, LO, i_remove(H, S));
+                _ -> sci2(LI, [H|LO], S)
+            end;
+        _ ->
+            case block_db:exists(H) of
+                false -> sci2(LI, LO, i_remove(H, S));
+                true -> sci2(LI, [H|LO], S)
+            end
+    end.
 i_new() ->
     %gb_sets:new().
     sets:new().

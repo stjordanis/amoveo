@@ -1,3 +1,14 @@
+WARNING
+========
+
+this is an old expired version of the documentation.
+
+Please use the new documentation instead. 
+
+Here is the main page for the new documentation: https://github.com/zack-bitcoin/amoveo-docs 
+
+And [here is the link for the newest version of the page you are currently looking at](https://github.com/zack-bitcoin/amoveo-docs/blob/master//icos.md)
+
 icos are bad.
 
 * One person can't know it all.
@@ -62,11 +73,6 @@ The owner can make all his employees sign contracts
 to agree to never talk about what happens on the job.
 The owner can offer bribes, to pay people to never
 mention his crimes.
-
-Putting good people in charge is not enough.
-The Stanford Prison experiment shows that almost
-anyone will violently abuse people, if they have 
-the opportunity. 
 
 Part of the problem is the hierarchy of the modern
 corporation. Money flows downward through a pyramid.

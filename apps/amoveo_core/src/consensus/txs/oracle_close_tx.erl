@@ -1,6 +1,5 @@
 -module(oracle_close_tx).
 -export([make/4, make_dict/3, go/4, from/1, oracle_id/1]).
--record(oracle_close, {from, nonce, fee, oracle_id}).
 -include("../../records.hrl").
 %If there is a lot of open orders for one type of share in an oracle for a long enough period of time, then this transaction can be done.
 %This ends betting in the market.
@@ -8,7 +7,7 @@
 from(X) -> X#oracle_close.from.
 oracle_id(X) -> X#oracle_close.oracle_id.
 make_dict(From, Fee, OID) ->
-    Acc = trees:dict_tree_get(accounts, From),
+    Acc = trees:get(accounts, From),
     #oracle_close{from = From, fee = Fee, oracle_id = OID, nonce = Acc#acc.nonce + 1}.
     
 make(From, Fee, OID, Trees) ->
@@ -19,7 +18,7 @@ make(From, Fee, OID, Trees) ->
         
 go(Tx, Dict, NewHeight, NonceCheck) ->
     From = Tx#oracle_close.from,
-    txs:developer_lock(From, NewHeight, Dict),
+    %txs:developer_lock(From, NewHeight, Dict),
     Nonce = if
 		NonceCheck -> Tx#oracle_close.nonce;
 		true -> none
@@ -27,10 +26,31 @@ go(Tx, Dict, NewHeight, NonceCheck) ->
     Acc = accounts:dict_update(From, Dict, -Tx#oracle_close.fee, Nonce),
     Dict2 = accounts:dict_write(Acc, Dict),
     OID = Tx#oracle_close.oracle_id,
-    Oracle = oracles:dict_get(OID, Dict2),
+    Oracle = oracles:dict_get(OID, Dict2, NewHeight),
+    F19 = forks:get(19),
+    if
+        NewHeight > F19 ->
+            0 = Oracle#oracle.result;
+        true -> ok
+    end,
     true = Oracle#oracle.starts =< NewHeight,
-    OIL = governance:dict_get_value(oracle_initial_liquidity, Dict2),
-    VolumeCheck = orders:dict_significant_volume(Dict2, OID, OIL),
+    Gov = Oracle#oracle.governance,
+    F14 = forks:get(14),
+    OIL = if
+              NewHeight < F14 ->
+                  governance:dict_get_value(oracle_initial_liquidity, Dict);
+              Gov == 0 -> 
+                  governance:dict_get_value(oracle_question_liquidity, Dict);
+              true ->
+                  governance:dict_get_value(oracle_initial_liquidity, Dict)
+          end,
+    %OIL = governance:dict_get_value(oracle_initial_liquidity, Dict2),
+    F10 = NewHeight > forks:get(10),
+    UMT = if%
+	      F10  -> unmatched;
+	      true -> orders%
+	  end,%
+    VolumeCheck = UMT:dict_significant_volume(Dict2, OID, OIL, NewHeight),
     Result = if
 		 VolumeCheck -> Oracle#oracle.type;
 		 true -> 3
@@ -64,7 +84,7 @@ go(Tx, Dict, NewHeight, NonceCheck) ->
 			governance:dict_unlock(G, Dict4)
                 end
         end,
-    Oracle4 = oracles:dict_get(OID, Dict5),
+    Oracle4 = oracles:dict_get(OID, Dict5, NewHeight),
     OracleType = Oracle4#oracle.type,
     LoserType = 
 	case OracleType of

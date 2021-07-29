@@ -1,17 +1,16 @@
-%we should probably keep a copy of this data on the hard drive. It would be bad to lose it.
-
 -module(order_book).
 -behaviour(gen_server).
 -export([start_link/0,code_change/3,handle_call/3,handle_cast/2,handle_info/2,init/1,terminate/2, 
 	 add/2,match/1,match/0,match_all/1,
-         price/1,remove/4,exposure/1,
-	 new_market/3, make_order/4, data/1,
+         price/1,remove/4,exposure/1, ob_type/1,
+	 new_market/3, new_scalar_market/6, make_order/4, 
+	 data/1, info/1,
 	 expires/1, period/1, keys/0, dump/1, dump_all/0,
 	 test/0]).
 %The market maker needs to refuse to remove some trades from the order book, if those trades are needed to cover his risk against trades that have already been matched.
 %To keep track of how much exposure has been matched, the market maker needs to remember a number.
 %We need to keep track of how much depth we have matched on one side, that way we can refuse to remove trades that are locked against money we need to cover commitments we already made in channels.
--record(ob, {exposure = 0, price = 5000, buys = [], sells = [], ratio = 5000, expires, period, height = 0}).%this is the price of buys, sells is 1-this.
+-record(ob, {exposure = 0, price = 5000, buys = [], sells = [], ratio = 5000, expires, period, height = 0, data}).%this is the price of buys, sells is 1-this.
 %Exposure to buys is positive.
 -record(order, {acc = 0, price, type=buy, amount}). %type is buy/sell
 -include("../records.hrl").
@@ -20,14 +19,14 @@ expires(OB) ->
     OB#ob.expires.
 period(OB) ->
     OB#ob.period.
+ob_type(OB) ->
+    OB#ob.data.
 make_order(Acc, Price, Type, Amount) ->
     #order{acc = Acc, price = Price, type = Type, amount = Amount}.
-data(OID) -> 
-    gen_server:call(?MODULE, {data, OID}).
 %lets make a dictionary to store order books. add, match, price, remove, and exposure all need one more input to specify which order book in the dictionary we are dealing with.
 %init(ok) -> {ok, #ob{}}.
 init(ok) -> 
-    io:fwrite("start order book \n"),
+    %io:fwrite("start order book \n"),
     process_flag(trap_exit, true),
     X = db:read(?LOC),
     KA = if
@@ -42,13 +41,14 @@ start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, ok, []).
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 terminate(_, X) -> 
     db:save(?LOC, X),
-    io:format("order book died!\n"), 
+    io:fwrite("order book died!\n"), 
     ok.
 handle_info(_, X) -> {noreply, X}.
-handle_cast({new_market, OID, Expires, Period}, X) ->
+handle_cast({new_market, OID, Expires, Period, Data}, X) ->
     error = dict:find(OID, X),
     OB = #ob{expires = Expires, 
-	     period = Period},
+	     period = Period,
+	     data = Data},
     NewX = dict:store(OID, OB, X),
     db:save(?LOC, NewX),
     {noreply, NewX};
@@ -95,7 +95,7 @@ handle_call(keys, _From, X) ->
 handle_call({match, OID}, _From, X) -> 
     %crawl upwards accepting the same volume of trades on each side, until they no longer profitably arbitrage. The final price should only close orders that are fully matched.
     %update a bunch of channels with this new price declaration.
-    io:fwrite("match internal\n"),
+    %io:fwrite("match internal\n"),
     {ok, OB} = dict:find(OID, X),
     Height = (tx_pool:get())#tx_pool.height,
     B = (Height - OB#ob.height) >= (OB#ob.period * 3 div 4),
@@ -103,26 +103,42 @@ handle_call({match, OID}, _From, X) ->
     {Out, X2}  = 
         case B of
             true ->
-                io:fwrite("do match\n"),
+                %io:fwrite("do match\n"),
                 {OB2, PriceDeclaration, Accounts, MatchPrice} = match_internal(Height, OID, OB, []),
                 case Accounts of
                     [] -> 
-                        io:fwrite("nothing to match\n"),
+                        %io:fwrite("nothing to match\n"),
                         {ok, X};%if there is nothing to match, then don't match anything.
                     _ ->
                         OB3 = OB2#ob{height = Height},
                         X3 = dict:store(OID, OB3, X),
-                        db:save(?LOC, X3),%maybe this should be line should be lower.
                         Expires = expires(OB3),
                         Period = period(OB3),
-                        CodeKey = market:market_smart_contract_key(OID, Expires, keys:pubkey(), Period, OID),
-                        SS = market:settle(PriceDeclaration, OID, MatchPrice),
+
+			io:fwrite("order book before codekey\n"),
+			io:fwrite(packer:pack(OB)),
+			io:fwrite("\n"),
+			{CodeKey, SS} = 
+			    case ob_type(OB) of
+				{binary} -> 
+				    CodeKey0 = lisp_market2:market_smart_contract_key(OID, Expires, keys:pubkey(), Period, OID),
+				    SS0 = lisp_market2:settle(PriceDeclaration, OID, MatchPrice),
+				    {CodeKey0, SS0};
+				{scalar, UpperLimit, LowerLimit, StartHeight} ->
+				    CodeKey1 = lisp_scalar:market_smart_contract_key(OID, Expires, keys:pubkey(), Period, OID, UpperLimit, LowerLimit, StartHeight),
+                                    OIDS = oracle_new_tx:scalar_keys(OID),%reversed
+				    SS1 = lisp_scalar:settle_scalar(PriceDeclaration, OIDS, MatchPrice),
+				    {CodeKey1, SS1}
+			    end,
+                        %CodeKey = market:market_smart_contract_key(OID, Expires, keys:pubkey(), Period, OID),
+                        %SS = market:settle(PriceDeclaration, OID, MatchPrice),
                         secrets:add(CodeKey, SS),
                         channel_feeder:bets_unlock(channel_manager:keys()),
+                        db:save(?LOC, X3),%maybe this should be line should be lower.
                         {{PriceDeclaration, Accounts}, X3}
                 end;
             false ->
-                io:fwrite("do not match\n"),
+                %io:fwrite("do not match\n"),
                 {ok, X}
         end,
             
@@ -132,6 +148,11 @@ handle_call({match, OID}, _From, X) ->
 handle_call({data, OID}, _From, Y) ->
     X = dict:find(OID, Y),
     {reply, X, Y};
+handle_call({info, OID}, _From, X) ->
+    {ok, OB} = dict:find(OID, X),
+    Y = [OB#ob.price, OB#ob.exposure, OB#ob.ratio, OB#ob.data],
+    {reply, Y, X};
+%price exposure ratio should be depreciated.
 handle_call({price, OID}, _From, X) -> 
     {ok, OB} = dict:find(OID, X),
     {reply, OB#ob.price, X};
@@ -147,19 +168,25 @@ finished_matching(Height, OID, OB, Accounts) ->
     Ratio = OB#ob.ratio,
     Price = OB#ob.price,
     MarketID = OID,
-    PriceDeclaration = market:price_declaration_maker(Height, Price, Ratio, MarketID),
+    PriceDeclaration = 
+        case ob_type(OB) of
+            {binary} ->
+                lisp_market2:price_declaration_maker(Height, Price, Ratio, MarketID);
+            {scalar, UL, LL, SH} ->
+                lisp_scalar:price_declaration_maker(Height, Price, Ratio, MarketID)
+        end,
     OB2 = OB#ob{exposure = E, height = Height},
     {OB2, PriceDeclaration, Accounts, Price}.
     
 match_internal(Height, OID, OB, Accounts) ->
-    io:fwrite("match internal internal\n"),
+    %io:fwrite("match internal internal\n"),
     E = OB#ob.exposure,
     Buys = OB#ob.buys,
     Sells = OB#ob.sells,
     if
 	((Buys == []) or
 	(Sells == [])) -> 
-            io:fwrite("no trades left to match in match internal\n"),
+            %io:fwrite("no trades left to match in match internal\n"),
 	    finished_matching(Height, OID, OB, Accounts);
 	true ->
 	    [Buy|B] = Buys,
@@ -218,13 +245,17 @@ add_trade(Order, [H|Trades]) ->
     end.
 keys() ->
     gen_server:call(?MODULE, keys).
+data(OID) -> 
+    gen_server:call(?MODULE, {data, OID}).
+info(OID) -> 
+    gen_server:call(?MODULE, {info, OID}).
     
 add(Order, OID) ->
     <<_:256>> = OID,
     gen_server:call(?MODULE, {add, Order, OID}).
 match(OID) ->
     <<_:256>> = OID,
-    Oracle = trees:dict_tree_get(oracles, OID),
+    Oracle = trees:get(oracles, OID),
     Result = Oracle#oracle.result,
     case Result of
         0 -> gen_server:call(?MODULE, {match, OID});
@@ -253,7 +284,11 @@ dump_all() ->
 dump(OID) ->
     gen_server:cast(?MODULE, {dump, OID}).
 new_market(OID, Expires, Period) ->
-    gen_server:cast(?MODULE, {new_market, OID, Expires, Period}).
+    new_market(OID, Expires, Period, {binary}).
+new_scalar_market(OID, Expires, Period, LL, UL, Many) ->
+    new_market(OID, Expires, Period, {scalar, UL, LL, Many}).
+new_market(OID, Expires, Period, Data) ->
+    gen_server:cast(?MODULE, {new_market, OID, Expires, Period, Data}).
 
 
 

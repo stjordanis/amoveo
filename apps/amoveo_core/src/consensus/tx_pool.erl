@@ -26,7 +26,8 @@ handle_call({absorb_tx, NewDict, Tx}, _From, F) ->
     %io:fwrite("\n"),
     %Governance = trees:governance(NewTrees),
     %MaxBlockSize = trees:get(governance, max_block_size),
-    MaxBlockSize = trees:get(governance, max_block_size, F#tx_pool.dict, F#tx_pool.block_trees),
+    MaxBlockSize_gov = trees:get(governance, max_block_size, F#tx_pool.dict, F#tx_pool.block_trees),
+    MaxBlockSize = governance:value(MaxBlockSize_gov),
     %MaxBlockSize = governance:get_value(max_block_size, Governance),
     F2 = case BlockSize > (MaxBlockSize - 150) of
              true ->
@@ -54,8 +55,12 @@ data_new() -> tx_pool:get().
 get() -> gen_server:call(?MODULE, data_new).
 dump() -> 
     gen_server:call(?MODULE, dump).
+%    PTxs = tx_reserve:all(),
+%    tx_pool_feeder:absorb_async(PTxs).
 dump(NewTop) -> 
     gen_server:call(?MODULE, {dump, NewTop}).
+%    PTxs = tx_reserve:all(),
+%    tx_pool_feeder:absorb_async(PTxs).
 absorb_tx(NewDict, Tx) ->
     gen_server:call(?MODULE, {absorb_tx, NewDict, Tx}).
 %absorb_tx(Trees, NewDict, Tx) ->

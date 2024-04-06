@@ -3,7 +3,7 @@
 
 -behaviour(gen_server).
 -export([start_link/0,code_change/3,handle_call/3,handle_cast/2,handle_info/2,init/1,terminate/2,
-	doit/1]).
+	doit/1, doit/2]).
 -record(freq, {time, many}).
 init(ok) -> {ok, dict:new()}.
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, ok, []).
@@ -11,7 +11,7 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 terminate(_, _) -> io:format("died!"), ok.
 handle_info(_, X) -> {noreply, X}.
 handle_cast(_, X) -> {noreply, X}.
-handle_call(IP, _From, X) -> 
+handle_call({IP, N}, _From, X) -> 
     B = white_list:check(IP),
     DF = dict:find(IP, X),
     if
@@ -30,7 +30,7 @@ handle_call(IP, _From, X) ->
 			       Val#freq.time),
 	    S = T / 1000000,%seconds
 	    Many0 = Val#freq.many * math:pow(0.5, S), %every second, divide how many have been used up by 1/2.
-	    Many = Many0 + 1,
+	    Many = Many0 + N,
 	    V2 = #freq{time = TimeNow,
 		       many = Many},
 	    X2 = dict:store(IP, V2, X),
@@ -45,6 +45,10 @@ handle_call(IP, _From, X) ->
 		true -> ok
 	    end,
 	    {reply, R, X2}
-    end.
+    end;
+handle_call(_, _From, X) -> 
+    {reply, X, X}.
 doit(IP) ->
-    gen_server:call(?MODULE, IP).
+    gen_server:call(?MODULE, {IP, 1}).
+doit(IP, N) ->
+    gen_server:call(?MODULE, {IP, N}).

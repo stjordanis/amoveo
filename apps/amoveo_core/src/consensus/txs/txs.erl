@@ -15,13 +15,27 @@ digest([C|T], Dict, H) ->
     end.
 digest_txs([], Dict, _) -> Dict;
 digest_txs([STx|T], Dict, Height) ->
-    true = signing:verify(STx),
+    case application:get_env(amoveo_core, assume_valid) of
+        {ok, {AssumeHeight, _}} ->
+            if
+                (AssumeHeight > Height) -> ok;
+                true -> true = signing:verify(STx)
+            end;
+        _ ->
+            %no assume_valid block in the config file.
+            true = signing:verify(STx)
+    end,
     Tx = signing:data(STx),
     Fee = element(4, Tx),
     true = Fee > 0,
     Key = element(1, Tx),
     M = key2module(Key),
-    NewDict = M:go(Tx, Dict, Height, true),
+    NewDict = case M of
+                  futarchy_bet_tx ->
+                      M:go(STx, Dict, Height, true);
+                  _ ->
+                      M:go(Tx, Dict, Height, true)
+              end,
     digest_txs(T, NewDict, Height).
 key2module(multi_tx) -> multi_tx;
 key2module(create_acc_tx) -> create_account_tx;
@@ -55,21 +69,16 @@ key2module(market_new_tx) -> market_new_tx;
 key2module(market_liquidity_tx) -> market_liquidity_tx;
 key2module(market_swap_tx) -> market_swap_tx;
 key2module(trade_cancel_tx) -> trade_cancel_tx;
+key2module(job_create_tx) -> job_create_tx;
+key2module(job_receive_salary_tx) -> job_receive_salary_tx;
+key2module(job_buy_tx) -> job_buy_tx;
+key2module(job_adjust_tx) -> job_adjust_tx;
+key2module(job_team_adjust_tx) -> job_team_adjust_tx;
+key2module(futarchy_new_tx) -> futarchy_new_tx;
+key2module(futarchy_bet_tx) -> futarchy_bet_tx;
+key2module(futarchy_resolve_tx) -> futarchy_resolve_tx;
+key2module(futarchy_matched_tx) -> futarchy_matched_tx;
+key2module(futarchy_unmatched_tx) -> futarchy_unmatched_tx;
 key2module(coinbase_old) -> coinbase_tx.
 developer_lock(From, NewHeight, Dict) -> ok.
-%case application:get_env(amoveo_core, kind) of
-%	{ok, "production"} -> ok;
-	    %Burn = base64:decode("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEFAx4lA9qJP3/x4hz1EkNIQAAAAAAAAA="),
-        %Burn = constants:burn_address(),
-	%    false = (From == Burn);
-	    %MP = constants:master_pub(),
-	    %if
-		%From == MP ->
-		%    BP = governance:dict_get_value(block_period, Dict),
-		%    HeightSwitch = (10 * constants:developer_lock_period()) div BP,
-		%    true = NewHeight > HeightSwitch;
-		%true -> ok
-	    %end;
-%	_ -> ok
-%    end.
     

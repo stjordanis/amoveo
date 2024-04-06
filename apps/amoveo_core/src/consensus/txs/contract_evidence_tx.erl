@@ -18,10 +18,13 @@ go(Tx, Dict, NewHeight, NonceCheck) ->
     evidence = Evidence,%like the script sig in bitcoin
     prove = Prove%on-chain state to include.
    } = Tx,
-    Nonce = if 
-                 NonceCheck -> Nonce0;
-                 true -> none
-             end,
+%    Nonce = if 
+%                 NonceCheck -> Nonce0;
+%                 true -> none
+%             end,
+    Nonce = nonce_check:doit(
+              NonceCheck, 
+              Tx#contract_evidence_tx.nonce),
     Facc = accounts:dict_update(From, Dict, -Fee, Nonce),
     Dict2 = accounts:dict_write(Facc, Dict),
     Contract = contracts:dict_get(CID, Dict2),
@@ -42,6 +45,9 @@ go(Tx, Dict, NewHeight, NonceCheck) ->
         {error, Error} ->
             io:fwrite("\n in contract_evidence_tx, contract has an error\n"),
             io:fwrite(Error),
+            io:fwrite("\n"),
+            io:fwrite("block height: "),
+            io:fwrite(integer_to_list(NewHeight)),
             io:fwrite("\n"),
             %io:fwrite(packer:pack([Prove, Evidence, ContractBytecode])),
             %io:fwrite("\n"),
@@ -86,7 +92,7 @@ go(Tx, Dict, NewHeight, NonceCheck) ->
                     B4 = all_lengths(RMany, Matrix),
                     TwoE32 = 4294967295,%(2**32 - 1) highest expressible value in chalang integers.
                     B5 = column_sum(TwoE32, Matrix),
-                    MCF = governance:dict_get_value(max_contract_flavors, Dict),
+                    MCF = governance:dict_get_value(max_contract_flavors, Dict, NewHeight),
                     B7 = RMany =< MCF,
                     B6 = B1 and B2 and B3 and B4 and B5 and B7,
                     if
@@ -118,6 +124,9 @@ go(Tx, Dict, NewHeight, NonceCheck) ->
                 Output ->
                     io:fwrite("in contract_evidence_tx, contract has invalid output\n"),
                     io:fwrite(packer:pack(Output)),
+                    io:fwrite("\n"),
+                    io:fwrite("block height: "),
+                    io:fwrite(integer_to_list(NewHeight)),
                     io:fwrite("\n"),
                     Dict2
             end
@@ -152,10 +161,14 @@ serialize_row([<<H:32>>|T], A) ->
 
 run(NewHeight, Prove, Evidence, ContractBytecode, Dict2) ->
     true = chalang:none_of(Evidence),
-    Funs = governance:dict_get_value(fun_limit, Dict2),
-    Vars = governance:dict_get_value(var_limit, Dict2),
-    OpGas = governance:dict_get_value(time_gas, Dict2),
-    RamGas = governance:dict_get_value(space_gas, Dict2),
+    Funs = governance:dict_get_value(
+             fun_limit, Dict2, NewHeight),
+    Vars = governance:dict_get_value(
+             var_limit, Dict2, NewHeight),
+    OpGas = governance:dict_get_value(
+              time_gas, Dict2, NewHeight),
+    RamGas = governance:dict_get_value(
+               space_gas, Dict2, NewHeight),
 
     State = chalang:new_state(NewHeight, 0, 0),
     ProveCode = spk:prove_facts(Prove, Dict2, NewHeight),

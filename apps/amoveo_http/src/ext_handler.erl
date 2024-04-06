@@ -2,7 +2,8 @@
 -include("../../amoveo_core/src/records.hrl").
 
 -export([init/3, handle/2, terminate/3, doit/1,
-	send_txs/4, init/2]).
+	send_txs/4, init/2, many_headers/2,
+        get_header_by_height/2, many_headers2/3]).
 %example of talking to this handler:
 %httpc:request(post, {"http://127.0.0.1:3010/", [], "application/octet-stream", "echo"}, [], []).
 %curl -i -d '["test"]' http://localhost:3011
@@ -13,9 +14,6 @@ handle(Req, State) ->
     {IP, _} = cowboy_req:peer(Req2),
     D = case request_frequency:doit(IP) of
 	    ok ->
-						%ok = request_frequency:doit(IP),
-		%{ok, TimesPerSecond} = application:get_env(amoveo_core, request_frequency),
-		%timer:sleep(round(1000/TimesPerSecond)),
 		true = is_binary(Data),
 		A = packer:unpack(Data),
 		B = case A of
@@ -32,6 +30,11 @@ handle(Req, State) ->
 					  end
 				  end),
 			    {ok, 0};
+                        {txs, []} -> {ok, ok};
+                        {txs, 2} -> doit(A);
+                        {txs, Txs = [_,[_|_]]} ->
+                            io:fwrite("the tx spam handler is being activated\n"),
+                            tx_spam_handler(Txs, IP);
 			_ -> doit(A)
 		    end,
 		packer:pack(B);
@@ -62,6 +65,10 @@ doit({markets, MID}) ->
     {ok, api:tree_common(markets, MID)};%trees:get(markets, MID)};
 doit({contracts, CID}) ->
     {ok, api:tree_common(contracts, CID)};%trees:get(contracts, CID)};
+doit({sub_accounts, IDs}) when is_list(IDs) ->
+    true = (length(IDs) < 1000),
+    Accs = lists:map(fun(X) -> api:tree_common(sub_accounts, X) end, IDs),
+    {ok, Accs}; 
 doit({sub_accounts, ID}) ->
     {ok, api:tree_common(sub_accounts, ID)};%trees:get(sub_accounts, ID)};
 doit({oracles, ID}) ->
@@ -70,6 +77,14 @@ doit({trades, ID}) ->
     {ok, api:tree_common(trades, ID)};
 doit({receipts, ID}) ->
     {ok, api:tree_common(receipts, ID)};
+doit({jobs, ID}) ->
+    {ok, api:tree_common(jobs, ID)};
+doit({futarchy, FID}) ->
+    {ok, api:tree_common(futarchy, FID)};
+doit({futarchy_unmatched, TID}) ->
+    {ok, api:tree_common(futarchy_unmatched, TID)};
+doit({futarchy_matched, TID}) ->
+    {ok, api:tree_common(futarchy_matched, TID)};
 doit({pubkey}) -> {ok, keys:pubkey()};
 doit({height}) -> {ok, block:height()};
 doit({version}) -> {ok, version:doit(block:height())};
@@ -84,18 +99,22 @@ doit({version, 3}) ->
     G = forks:get(N),
     {ok, N, G};
 doit({give_block, Block}) -> %block can also be a list of blocks.
-    io:fwrite("ext_handler receiving blocks\n"),
+    %io:fwrite("ext_handler receiving blocks\n"),
     %Response = block_absorber:save(Block),
-    A = if
-	    is_list(Block) -> Block;
-	    true -> [Block]
-	end,
-    Response = block_organizer:add(A),
-    R2 = if
-	     is_atom(Response) -> 0;
-	     true -> Response
-	 end,
-    {ok, R2};
+    case sync_mode:check() of
+        quick -> {ok, 0};
+        normal ->
+            A = if
+                    is_list(Block) -> Block;
+                    true -> [Block]
+                end,
+            Response = block_organizer:add(A),
+            R2 = if
+                     is_atom(Response) -> 0;
+                     true -> Response
+                 end,
+            {ok, R2}
+    end;
 doit({block, N}) when (is_integer(N) and (N > -1))->
     {ok, block:get_by_height(N)};
 doit({block, 2, H}) ->
@@ -105,6 +124,9 @@ doit({blocks, Many, N}) ->
     %X = block_reader:doit(Many, N),
     X = block_db:read(Many, N),
     %X = many_blocks(Many, N),
+    {ok, X};
+doit({blocks, -1, Many, Highest}) ->
+    X = block_db:read_reverse(Many, Highest),
     {ok, X};
 doit({header, N}) when is_integer(N) -> 
     {ok, block:block_to_header(block:get_by_height(N))};
@@ -124,9 +146,25 @@ doit({headers, _H}) ->
 %		  end
 %	  end),
     {ok, 0};
-doit({headers, Many, N}) -> 
-    X = many_headers(Many, N),
-    {ok, X};
+doit({headers, _Many, N}) -> 
+    
+    %todo. if we look up earlier than 260000, the output is 5000 blocks earlier than we had wanted.
+    %todo. doesn't include top header in output.
+    
+
+    %X = many_headers(Many, N),
+    T = api:height(),
+    N2 = N - (N rem 5000),
+    %N2 = N rem 5000,
+    if
+        %N2 < (T - 5000) ->
+        N < (T - 5000) ->
+            X = many_headers(5000, N2),
+            {ok, X};
+        true ->
+            X = many_headers(T-N+1, N),
+            {ok, X}
+    end;
 doit({header}) -> {ok, headers:top()};
 doit({peers}) ->
     P = peers:all(),
@@ -149,14 +187,13 @@ doit({txs, 2, Checksums}) ->%request the txs for these checksums
     ST = send_txs(Txs, CS, Checksums, []),
     {ok, ST};
 doit({txs, [Tx]}) ->
-    %io:fwrite("ext handler txs\n"),
     tx_pool_feeder:absorb(Tx),
     timer:sleep(200),
     Txs = (tx_pool:get())#tx_pool.txs,
     B = is_in(Tx, Txs),
     Y = case B of
-	    true -> hash:doit(signing:data(Tx));
-	    false -> <<"error">>
+            true -> hash:doit(signing:data(Tx));
+            false -> <<"error">>
         end,
     {ok, Y};
 doit({txs, Txs}) ->
@@ -294,18 +331,38 @@ doit({channel_sync, From, SSPK}) ->
     {ok, Return};
 doit({bets}) ->
     free_variables:bets();
+doit({proof, IDs, Hash}) ->
+    %batch verkle proofs.
+    Loc = (block:get_by_hash(Hash))#block.trees,
+    true = is_integer(Loc),
+    
+    %io:fwrite({IDs, Loc}),%{<<_:520>>, 13}
+%    IDs2 = lists:map(fun([TreeName, ID]) ->
+                             %trees2:key({TreeName, ID}) end,
+%                             {TreeName, ID} end,
+%                     IDs),
+    {Proof, IDs3} = trees2:get_proof(IDs, Loc, fast),
+    %todo. put this proof in a format that javascript will understand.
+    {ok, {Proof, IDs3}};
+    
 doit({proof, TreeName, ID, Hash}) ->
 %here is an example of looking up the 5th governance variable. the word "governance" has to be encoded base64 to be a valid packer:pack encoding.
 %curl -i -d '["proof", "Z292ZXJuYW5jZQ==", 5, Hash]' http://localhost:8080 
     %io:fwrite(base64:encode(Hash)),
     %io:fwrite("\n"),
-    Trees = (block:get_by_hash(Hash))#block.trees,%this line failed.b
-    TN = trees:name(TreeName),
-    Root = trees:TN(Trees),
-    %io:fwrite(packer:pack([ext_handler_proof2, TreeName, ID, Root])),
-    {RootHash, Value, Proof} = TN:get(ID, Root),
-    Proof2 = proof_packer(Proof),
-    {ok, {return, trees:serialized_roots(Trees), RootHash, Value, Proof2}};
+    Trees = (block:get_by_hash(Hash))#block.trees,
+    TN = trees:name(TreeName), 
+    if
+        is_integer(Trees) ->
+            %io:fwrite("we needed a verkle proof, not a merkle proof\n"),
+            doit({proof, [{TN, ID}], Hash});
+        true ->
+            %merkle case
+            Root = trees:TN(Trees),
+            {RootHash, Value, Proof} = TN:get(ID, Root),
+            Proof2 = proof_packer(Proof),
+            {ok, {return, trees:serialized_roots(Trees), RootHash, Value, Proof2}}
+    end;
 doit({list_oracles}) ->
     {ok, order_book:keys()};
 doit({oracle, 2, QuestionHash}) ->
@@ -416,13 +473,78 @@ proof_packer(X) -> X.
 %            end
 %    end.
 get_header_by_height(N, H) ->
-    case H#header.height of
-	N -> H;
-	_ -> 
-	    {ok, Child} = headers:read(H#header.prev_hash),
-	    get_header_by_height(N, Child)
+    HH = H#header.height,
+    if
+        (HH == N) -> H;
+        (HH < N) -> H;
+        true ->
+            case headers:read(H#header.prev_hash) of
+                {ok, Child} ->
+                    get_header_by_height(N, Child);
+                error -> io:fwrite({N, H})
+            end
     end.
+        
+                         
+%    case H#header.height of
+        %0 -> H;
+%	N -> H;
+%	_ -> 
+%            case headers:read(H#header.prev_hash) of
+%                {ok, Child} ->
+%                    get_header_by_height(N, Child);
+%                error -> io:fwrite({N, H}),
+%                         1=2
+%            end
+%    end.
 	    
+many_headers_cached_broken(Many, X) ->
+    %io:fwrite("many headers "), 
+    %io:fwrite(packer:pack([Many, X])), 
+    %io:fwrite("\n"),
+    Z = max(0, X + Many - 1),%number of highest header that we want.
+    %H = headers:top(),
+    APIHeight = api:height(),
+    case APIHeight >= (X) of
+	false -> [];
+	true ->
+	    {N, Many2} = 
+		if 
+		    Z < APIHeight ->
+                        %we have all the headers we need to create this batch.
+			{Z, Many};
+		    true ->
+                        %we don't have enough headers.
+			{APIHeight, Many - (Z - APIHeight)}
+		end,
+						%N = min(H#header.height, X + Many - 1),
+            N = min(Z, APIHeight),%end of range that we want.
+            Many2 = Many - max(0, (Z - APIHeight)),
+	    %Nth = get_header_by_height(N, H),
+	    %Result = many_headers2(Many2, Nth, []),
+            N2 = (N - (N rem 5000)),
+            case Many2 of
+                5000 ->
+                    case header_cache:read(N2) of
+                        error ->
+                            %io:fwrite("slow\n"),
+                            io:fwrite(integer_to_list(N2)),
+                            %H = block:block_to_header(block:top()),
+                            H = headers:top(),
+                            Nth = get_header_by_height(N2, H),
+                            Result = many_headers2(Many2, Nth, []),
+                            header_cache:store(N2, Result),
+                            Result;
+                        {ok, Result2} ->
+                            %io:fwrite("fast\n"),
+                            Result2
+                    end;
+                _ ->
+                    H = block:block_to_header(block:top()),
+                    Nth = get_header_by_height(N, H),
+                    many_headers2(Many2, Nth, [])
+            end
+    end.
 many_headers(Many, X) ->
     %io:fwrite("many headers "), 
     %io:fwrite(packer:pack([Many, X])), 
@@ -487,3 +609,30 @@ is_in(X, [X|_]) -> true;
 is_in(_, []) -> false;
 is_in(X, [_|T]) -> 
     is_in(X, T).
+
+
+tx_spam_handler([], _) ->
+    io:fwrite("spam handler ended\n"),
+    {ok, 0};
+tx_spam_handler([Tx|T], IP) ->
+    io:fwrite("tx spam handler\n"),
+    case tx_pool_feeder:absorb(Tx) of
+        timeout_error -> 
+ %this means the tx failed in a way that makes it seem like it was included already.
+            %we know that this tx is not in the tx pool.
+ %if this tx is not in the most recent block or the tx pool, then we need to blacklist the sender.
+            case request_frequency:doit(IP, 10) of
+                ok -> tx_spam_handler(T, IP);
+                _ -> 
+                    io:fwrite("received expired tx\n"),
+                    {ok, <<"stop spamming the server">>}
+            end;
+        error -> tx_spam_handler(T, IP);
+        ok -> tx_spam_handler(T, IP);
+        ERROR ->
+            %unexpected error
+            ERROR
+    end;
+tx_spam_handler(Tx, IP) ->
+    io:fwrite({Tx, IP}).
+

@@ -60,17 +60,17 @@
     {download_blocks_batch, 50},%% How many blocks we get per request.
     {download_blocks_many, 3}, %% we are storing blocks in the block_absorber mail box, which is RAM. many*batch*blocksize is how much ram we are using, at most.
     {headers_version, 2},
-    {trie_mode, ram},%hd or ram. hd mode saves like 5 mb of ram, but is slower.
+    {trie_mode, hd},%hd or ram. hd mode saves like 5 mb of ram, but is slower.
     {db_version, 2},%version 1 stores each block compressed as its own page on the hard drive. version 2 stores the recent blocks in ram, and stores pages of hundreds of older blocks compressed together. When we are serving the blocks, version 2 sends entire pages together without decompressing them, saving a lot of bandwidth.
-    {get_block_buffer, 500},%how many blocks to download and store in a queue ready to be synced. Increasing this takes more ram, and makes some data structures slower, but it can help if your internet connection has high latency.
+    {get_block_buffer, 10},%how many blocks to download and store in a queue ready to be synced. Increasing this takes more ram, and makes some data structures slower, but it can help if your internet connection has high latency.
     {block_cache, 5000000}, %5 megabytes, this is how many blocks measured in bytes in ram get compressed into a page of blocks on the hard drive.
     {compression_level, 2},%integer between 1 and 9, 9 is the most compression.
     {block_threads, 2},
     {push_blocks_batch, 50},
 
-    {checkpoint_depth, -100},
-    {reverse_syncing, false},
-    
+    {checkpoint_depth, 1000},%we want to keep this bigger than the fork_tolerance.
+    {reverse_syncing, true},
+    {minimum_to_verify, 162000}, %below this block height, it does not verify blocks, it just checks that the blocks hash matches the header for the same height.
 
     {internal_ip, {127,0,0,1}},
     {external_ip, {0,0,0,0}},
@@ -83,7 +83,14 @@
     {block_meta_before, true},
     {block_meta_following, true},
     
-    {mining_pool_refresher, 0}
+    {mining_pool_refresher, 0},
+
+    {internal_tx_timeout, 2000}, %%in miliseconds.
+
+    {assume_valid, {215000, <<106,76,110,178,197,122,84,1,2,214,133,241,162,40,199,195,154,209,75,247,164,238,62,15,204,26,49,163,115,111,239,85>>}}
+    %200 blocks per second without this.
+    %starts at height: 100 time: 161438 880120
+
   ]},
 
    {lager, [

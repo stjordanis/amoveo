@@ -20,13 +20,13 @@ handle_call(check, _From, X) ->
     {reply, X, X};
 handle_call({doit, BP}, _From, X) -> 
     Y = absorb_internal(BP),
+    %io:fwrite("block absorber, absorb_internal finished\n"),
     {reply, Y, now()}.
 check() -> gen_server:call(?MODULE, check).
 save([]) -> ok;
 save([T]) -> save(T);
 save([B|T]) -> save(B), save(T);
 save(X) -> 
-    %io:fwrite("block_absorber:save \n"),
     case sync:status() of
 	go ->
 	    gen_server:call(?MODULE, {doit, X}, 10000);
@@ -45,13 +45,13 @@ absorb_internal(Block) ->
     %io:fwrite("\n"), 
     if
 	Height > (MyHeight + 1) ->
-	    %io:fwrite("too high"),
+	    io:fwrite("too high"),
             0;
 	Height < (MyHeight - 300) ->
 	    %io:fwrite("too low"),
             0;
 	true ->
-	    {_, _, BH} = Block#block.trees,
+	    {_, _, _, BH} = Block#block.trees,
 	    %io:fwrite("block absorber 1\n"), % 0.00005
 	    %io:fwrite(packer:pack(erlang:timestamp())),
 	    %io:fwrite("\n"),
@@ -90,42 +90,56 @@ absorb_internal(Block) ->
 		    %io:fwrite(packer:pack(erlang:timestamp())),
 		    %io:fwrite("\n"),
 		    %headers:absorb([H]),
-                    %io:fwrite("block absorber 2\n"), % 0.00005
 		    %io:fwrite(packer:pack(erlang:timestamp())),
 		    %io:fwrite("\n"),
 		    {true, Block2} = block:check(Block),%writing new block's data into the consensus state merkle trees.
-		    %io:fwrite("block absorber 3\n"), % 0.0025
 		    %io:fwrite(packer:pack(erlang:timestamp())),
 		    %io:fwrite("\n"),
 		    do_save(Block2, BH),
-		    %io:fwrite("block absorber 4\n"), % 0.00144
 		    %io:fwrite(packer:pack(erlang:timestamp())),
 		    %io:fwrite("\n"),
 		    headers:absorb_with_block([H]),
 		    Header = H,
-		    %io:fwrite("block absorber 5\n"), % 0.00008
 		    %io:fwrite(packer:pack(erlang:timestamp())),
 		    %io:fwrite("\n"),
 
 		    case sync_mode:check() of
 			normal -> 
+                            %todo. after orphan tx restoring is done in the headers, remove it from here.
 			    push_block:add(Block2),
 			    recent_blocks:add(BH, Header#header.accumulative_difficulty, Height),
-			    Txs0 = (tx_pool:get())#tx_pool.txs,
+			    %Txs0 = (tx_pool:get())#tx_pool.txs,
 			    %TB = block:top(),
-			    TWBH0 = block:hash(headers:top_with_block()),
-			    TB = block:get_by_hash(TWBH0),
-			    Txs = if
-				      NextBlock == TWBH0 ->
-					  Txs0;
-				      true -> Txs0 ++ lists:reverse(tl(TB#block.txs))%if there is a small fork, re-broadcast the orphaned txs.
-				  end,
-			    %tx_pool:dump(Block2),
-			    OldTxs = tl(Block#block.txs),
-			    Keep = lists:filter(fun(T) -> not(tx_pool_feeder:is_in(signing:data(T), OldTxs)) end, Txs),%This n**2 algorithm is slow. We can make it n*log(n) by sorting both lists first, and then comparing them.
-			    tx_pool_feeder:absorb_dump(Block2, lists:reverse(Keep)),
-			    potential_block:dump(),
-			    %order_book:match();
+			    %TWBH0 = block:hash(headers:top_with_block()),
+			    %TB = block:get_by_hash(TWBH0),
+			   % Txs = if
+				%      NextBlock == TWBH0 ->
+				%	  Txs0;
+				%      true -> 
+                                %          io:fwrite("in block_absorber, doing an orphaning. \n txs: "),
+                                %          lists:reverse(tl(TB#block.txs)) ++ Txs0 %if there is a small fork, re-broadcast the orphaned txs.
+				%  end,
+			   % OldTxs = tl(Block#block.txs),
+                            
+			    %tx_pool_feeder:absorb_dump(Block2, lists:reverse(Keep)),
+%                         io:fwrite("about to absorb dump2\n"),
+			    tx_pool_feeder:absorb_dump2(Block2, []),
+%                         io:fwrite("done with absorb dump2\n"),
+			    %tx_pool_feeder:absorb_dump2(Block2, tx_reserve:all()),
+%			    tx_pool_feeder:absorb_dump(Block2, tx_reserve:all()),
+                            tx_reserve:restore(),
+			    potential_block:new(),
+                            spawn(fun() ->
+                                          timer:sleep(1000),
+                                          ok
+                                          %tx_reserve:restore()
+                                         % timer:sleep(20000),
+                                         % tx_reserve:restore()
+                                  end),
+%                            lists:map(fun(Tx) ->
+%                                              tx_pool_feeder:absorb_async([Tx])
+%                                      end, lists:reverse(tx_reserve:all())),
+                                              
                             ok;
 			quick -> 
                             spawn(fun() ->
@@ -151,16 +165,21 @@ absorb_internal(Block) ->
 %                        true -> ok
 %                    end,
                     checkpoint:make(),
-
-
-		    %io:fwrite("block absorber 9\n"),
 		    %io:fwrite(packer:pack(erlang:timestamp())),
 		    %io:fwrite("\n"),
+
+                    tx_reserve:in_block(Block2#block.txs),
+                    tx_reserve:clean(Block2#block.height),
 		    if
-			(Block2#block.height rem 100) == 0 ->
+			(Block2#block.height rem 20) == 0 ->
 			%1 == 1 ->
-			    io:fwrite("absorb block "),
+                            {_, T1, T2} = erlang:timestamp(),
+			    io:fwrite("absorb block height: "),
 			    io:fwrite(integer_to_list(Block2#block.height)),
+                            io:fwrite(" time: "),
+                            io:fwrite(integer_to_list(T1)),
+                            io:fwrite(" "),
+                            io:fwrite(integer_to_list(T2)),
 			    io:fwrite("\n");
 			true -> ok
 		    end,

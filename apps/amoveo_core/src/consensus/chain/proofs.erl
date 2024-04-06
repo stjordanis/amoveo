@@ -1,9 +1,10 @@
 -module(proofs).
 -export([prove/2, test/0, hash/1, facts_to_dict/2, txs_to_querys/3, 
-         root/1, tree/1, path/1, value/1, governance_to_querys/1,
+         root/1, tree/1, path/1, value/1, %governance_to_querys/1,
          key/1]).
 -define(Header, 1).
 -record(proof, {tree, value, root, key, path}).
+-record(oracle_bet, {id, true, false, bad}).%true, false, and bad are the 3 types of shares that can be purchased from an oracle%
 -include("../../records.hrl").
 
 root(X) -> X#proof.root.
@@ -28,7 +29,11 @@ tree_to_int(contracts) -> 13;
 tree_to_int(trades) -> 14;
 tree_to_int(markets) -> 15;
 tree_to_int(receipts) -> 16;
-tree_to_int(stablecoins) -> 17.
+tree_to_int(stablecoins) -> 17;
+tree_to_int(jobs) -> 18;
+tree_to_int(futarchy) -> 19;
+tree_to_int(futarchy_matched) -> 20;
+tree_to_int(futarchy_unmatched) -> 21.
 
 int_to_tree(1) -> accounts;
 int_to_tree(2) -> channels;
@@ -45,7 +50,39 @@ int_to_tree(13) -> contracts;
 int_to_tree(14) -> trades;
 int_to_tree(15) -> markets;
 int_to_tree(16) -> receipts;
-int_to_tree(17) -> stablecoins.
+int_to_tree(17) -> stablecoins;
+int_to_tree(18) -> jobs;
+int_to_tree(19) -> futarchy;
+int_to_tree(20) -> futarchy_matched;
+int_to_tree(21) -> futarchy_unmatched.
+
+leaf_type2tree(empty) -> empty;
+leaf_type2tree(accounts) -> accounts;
+leaf_type2tree(acc) -> accounts;
+leaf_type2tree(oracle) -> oracles;
+leaf_type2tree(oracles) -> oracles;
+leaf_type2tree(unmatched) -> unmatched;
+leaf_type2tree(unmatched_head) -> unmatched;
+leaf_type2tree(matched) -> matched;
+leaf_type2tree(sub_acc) -> sub_accounts;
+leaf_type2tree(sub_accounts) -> sub_accounts;
+leaf_type2tree(multi_tx) -> multi_tx;
+leaf_type2tree(contracts) -> contracts;
+leaf_type2tree(contract) -> contracts;
+leaf_type2tree(trades) -> trades;
+leaf_type2tree(trade) -> trades;
+leaf_type2tree(markets) -> markets;
+leaf_type2tree(market) -> markets;
+leaf_type2tree(receipts) -> receipts;
+leaf_type2tree(stablecoins) -> stablecoins;
+leaf_type2tree(job) -> jobs;
+leaf_type2tree(jobs) -> jobs;
+leaf_type2tree(futarchy) -> futarchy;
+leaf_type2tree(futarchy_unmatched) -> 
+    futarchy_unmatched;
+leaf_type2tree(futarchy_matched) -> 
+    futarchy_matched.
+
     
 
 %deterministic merge-sort    
@@ -84,6 +121,18 @@ det_order(Querys) ->
     det_helper(F).
 %finished defining merge-sort.       
 
+remove_repeats([]) -> [];
+remove_repeats([X, X|T]) -> 
+    remove_repeats([X|T]);
+remove_repeats([A|B]) -> 
+    [A|remove_repeats(B)].
+
+prove(Querys, Trees) when is_integer(Trees) ->
+    X = case application:get_env(amoveo_core, kind) of
+            {ok, "production"} -> small;
+            _ -> fast
+        end,
+    trees2:get_proof(Querys, Trees, X);
 prove(Querys, Trees) ->
     F2 = det_order(Querys),
     prove2(F2, Trees).
@@ -159,25 +208,113 @@ facts_to_dict([F|T], D) ->
           F#proof.value,
           F#proof.path),
     Key = F#proof.key,
-    Value0 = F#proof.value,
-    Value3 = case Tree of
-                 accounts -> {Value0, 0};
-                 oracles -> {Value0, 0};
-                 _ -> Value0
-            end,
-    D2 = dict:store({Tree, Key}, Value3, D),
-    facts_to_dict(T, D2).
+    Value0_0 = F#proof.value,
+    HK = trees2:hash_key(Tree, Key),
+    D2 = case Value0_0 of
+        0 ->
+            csc:add_empty(Tree, HK, 
+                          {Tree, Key}, D);
+        _ ->
+                 Value0 = 
+                     Tree:deserialize(Value0_0),
+                 Value3 = 
+                     case Tree of
+                         accounts -> 
+                             Value0#acc{bets = 0};
+                         oracles -> 
+                             Value0#oracle{
+                               orders = 0};
+                         _ -> Value0
+                     end,
+                 csc:add(Tree, HK, {Tree, Key}, 
+                         Value3, D)
+         end,
+    facts_to_dict(T, D2);
+facts_to_dict({_VerkleProof, Leaves}, D) ->
+    lists:foldl(
+      fun(Leaf, Acc) ->
+              %Key = trees2:key(Leaf),
+              Key = dict_key(Leaf),
+              Tree0 = element(1, Leaf),
+              if
+                  true -> ok;
+                  Tree0 == empty -> 
+                      io:fwrite({Leaves});
+                  true -> ok
+              end,
+              Tree = leaf_type2tree(Tree0),
+              HK = trees2:hash_key(Tree, Key),
+              if
+                  is_tuple(Leaf) and (size(Leaf) == 2) and (element(1, Leaf) == Tree) ->
+                      csc:add_empty(Tree, HK, {Tree, Key}, Acc);
+                  true ->
+                      csc:add(Tree, HK, {Tree, Key}, Leaf, Acc)
+              end
+              %Value = trees2:serialize(Leaf),
+                  %dict:store({Tree, Key}, Leaf, Acc)
+      end, D, Leaves);
+facts_to_dict(A, _) ->
+    io:fwrite(A),
+    ok.
+
+-record(unmatched, {account, %pubkey of the account
+		    oracle, %oracle id
+		    amount,
+		    pointer}).
+-record(receipt, {id, tid, pubkey, nonce}).
+
+dict_key({_, K}) -> K;
+dict_key(#acc{pubkey = Pub}) -> Pub;
+dict_key(#oracle{id = X}) -> X;
+dict_key(#matched{account = A, oracle = O}) -> 
+    {key, A, O};
+dict_key(#unmatched{account = A, oracle = O}) -> 
+    {key, A, O};
+dict_key({unmatched_head, Pointer, 
+          Many, Oracle}) -> 
+    {key, <<1:520>>, Oracle};
+dict_key(#sub_acc{pubkey = P, contract_id = CID, 
+                  type = T}) -> 
+    if
+        is_integer(CID) -> 1=2;
+        true -> ok
+    end,
+    sub_accounts:make_v_key(P, CID, T);
+dict_key(C = #contract{}) -> 
+    contracts:make_id(C);
+dict_key(#trade{value = V}) -> V;
+dict_key(#market{id = X}) -> X;
+dict_key(#receipt{id = Z}) -> Z;
+dict_key(#job{id = Z}) -> Z;
+dict_key(#futarchy{fid = X}) -> X;
+dict_key(#futarchy_matched{id = X}) -> X;
+dict_key(#futarchy_unmatched{id = X}) -> X.
+
 hash(F) ->
     hash:doit(F).
-governance_to_querys(Gov) ->
-    Leaves = trie:get_all(Gov, governance),
-    Keys = leaves_to_querys(Leaves).
-leaves_to_querys([]) -> [];
-leaves_to_querys([L|T]) ->
-    Q = {governance, leaf:key(L)},
-    [Q|leaves_to_querys(T)].
+%governance_to_querys(Gov) ->
+%    Leaves = trie:get_all(Gov, governance),
+%    Keys = leaves_to_querys(Leaves).
+%leaves_to_querys([]) -> [];
+%leaves_to_querys([L|T]) ->
+%    Q = {governance, leaf:key(L)},
+%    [Q|leaves_to_querys(T)].
 -define(n2i(X), governance:name2number(X)).
 txs_to_querys([C|T], Trees, Height) -> 
+    F52 = forks:get(52),
+    Q = txs_to_querys_old([C|T], Trees, Height),
+    if
+        Height > F52 -> remove_govs(Q);
+        true -> Q
+    end.
+remove_govs([]) -> [];
+remove_govs([{governance, _}|T]) -> 
+    remove_govs(T);
+remove_govs([H|T]) -> 
+    [H|remove_govs(T)].
+
+
+txs_to_querys_old([C|T], Trees, Height) -> 
     case element(1, C) of
         coinbase ->
             F33 = forks:get(33),
@@ -190,7 +327,9 @@ txs_to_querys([C|T], Trees, Height) ->
              {governance, ?n2i(block_reward)},
              {governance, ?n2i(developer_reward)},
              {accounts, constants:master_pub()},
+             %{accounts, trees2:hash_key(accounts, constants:master_pub())},
              {accounts, coinbase_tx:from(C)}
+             %{accounts, trees2:hash_key(accounts, coinbase_tx:from(C))}
             ] ++ U ++
                 txs_to_querys2(T, Trees, Height);
         signed -> txs_to_querys2([C|T], Trees, Height)
@@ -360,19 +499,20 @@ txs_to_querys2([STx|T], Trees, Height) ->
                     make_orders(Pubkeys, OID, F10),
 		U = if%
 			F10 -> {unmatched, #key{pub = <<?Header:PS>>, id = OID}};
-		    true -> {orders, #key{pub = <<?Header:PS>>, id = OID}}%
+                        true -> {orders, #key{pub = <<?Header:PS>>, id = OID}}%
 		    end,%
                 OTG = oracle_type_get(Trees, OID, Height),
 		[
 		 {governance, ?n2i(oracle_bet)},
 		 {governance, ?n2i(minimum_oracle_time)},
-		 {governance, OTG},
-		 {oracles, OID}] ++ [U] ++ Prove;
+		 %{governance, OTG},
+		 {oracles, OID}] ++ OTG ++ [U] ++ Prove;
 	    oracle_close -> 
                 AID = oracle_close_tx:from(Tx),
                 OID = oracle_close_tx:oracle_id(Tx),
-                Oracles = trees:oracles(Trees),
-                {_, Oracle, _} = oracles:get(OID, Oracles),
+                %Oracles = trees:oracles(Trees),
+                %{_, Oracle, _} = oracles:get(OID, Oracles),
+                Oracle = trees:get(oracles, OID, dict:new(), Trees),
                 Gov = Oracle#oracle.governance,
                 G = case Gov of
                         0 -> [];
@@ -397,10 +537,10 @@ txs_to_querys2([STx|T], Trees, Height) ->
                  {governance, ?n2i(minimum_oracle_time)},
                  {governance, ?n2i(maximum_oracle_time)},
                  {governance, ?n2i(oracle_close)},
-                 {governance, OTG},
+                 %{governance, OTG},
                  {governance, ?n2i(oracle_bet)},
                  {oracles, OID}
-                ] ++ U ++ Prove ++ G;
+                ] ++ OTG ++ U ++ Prove ++ G;
 	    unmatched -> 
                 OID = oracle_unmatched_tx:oracle_id(Tx),
                 From = oracle_unmatched_tx:from(Tx),
@@ -429,6 +569,8 @@ txs_to_querys2([STx|T], Trees, Height) ->
                 ] ++ U;
             contract_use_tx ->
                 CID = contract_use_tx:cid(Tx),
+                %#contract_use_tx{many = MT, source = S, source_type = ST} = Tx,
+                %CID = contracts:make_v_id(CH, MT, S, ST),
                 From = contract_use_tx:from(Tx),
                 SA = use_contract_sub_accounts(Tx),
                 #contract_use_tx{
@@ -438,7 +580,7 @@ txs_to_querys2([STx|T], Trees, Height) ->
                 U = case Source of
                         <<0:256>> -> [];
                         _ -> 
-                            SubAdd = sub_accounts:make_key(From, Source, SourceType),
+                            SubAdd = sub_accounts:make_v_key(From, Source, SourceType),
                             [{sub_accounts, SubAdd}]
                     end,
                 [{accounts, From},
@@ -452,7 +594,13 @@ txs_to_querys2([STx|T], Trees, Height) ->
               source = S,
               source_type = ST,
               many_types = MT} = Tx,
-                CID = contracts:make_id(CH, MT,S,ST),
+                F52 = forks:get(52),
+                
+                CID = if
+                          Height < F52 ->
+                              contracts:make_id(CH, MT,S,ST);
+                          true -> contracts:make_v_id(CH, MT, S, ST)
+                      end,
                 [{accounts, From},
                  {contracts, CID},
                  {governance, ?n2i(contract_new_tx)},
@@ -484,8 +632,8 @@ txs_to_querys2([STx|T], Trees, Height) ->
               from = From,
               to = To
              } = Tx,
-                FKey = sub_accounts:make_key(From, CID, N),
-                TKey = sub_accounts:make_key(To, CID, N),
+                FKey = sub_accounts:make_v_key(From, CID, N),
+                TKey = sub_accounts:make_v_key(To, CID, N),
                 [{accounts, From},
                  {sub_accounts, FKey},
                  {sub_accounts, TKey},
@@ -513,8 +661,9 @@ txs_to_querys2([STx|T], Trees, Height) ->
               %proof = Proof,
               from = From
              } = Tx,
-                Contracts = trees:contracts(Trees),
-                {_, Contract, _} = contracts:get(CID, Contracts),
+                %Contracts = trees:contracts(Trees),
+                %{_, Contract, _} = contracts:get(CID, Contracts),
+                Contract = trees:get(contracts, CID, dict:new(), Trees),
                 #contract{
                            %source = Source,
                            %source_type = SourceType,
@@ -522,11 +671,7 @@ txs_to_querys2([STx|T], Trees, Height) ->
                          } = Contract,
                 U = case CID2 of
                         <<0:256>> -> [];
-                        _ ->
-                            %{_, _, {_, CID2, _}} = Proof,
-                            %ManyTypes = length(Row),
-                            %CID2 = contracts:make_id(CH2, ManyTypes, Source, SourceType),
-                            [{contracts, CID2}]
+                        _ -> [{contract, CID2}]
                     end,
                 [{accounts, From},
                  {contracts, CID},
@@ -542,8 +687,9 @@ txs_to_querys2([STx|T], Trees, Height) ->
                         0 -> [];
                         _ -> [{contracts, Sink}]
                     end,
-                Contracts = trees:contracts(Trees),
-                {_, Contract, _} = contracts:get(CID, Contracts),
+                %Contracts = trees:contracts(Trees),
+                %{_, Contract, _} = contracts:get(CID, Contracts),
+                Contract = trees:get(contracts, CID, dict:new(), Trees),
                 U2 = case Contract of
                          empty -> [];
                          #contract{} ->
@@ -552,9 +698,18 @@ txs_to_querys2([STx|T], Trees, Height) ->
                                    } = Contract,
                              [{contracts, Sink2}]
                      end,
-                [{accounts, From},
+                ThingsToProve = [{accounts, From},
                  {contracts, CID}
-                ] ++ U ++ U2;
+                ] ++ U ++ U2,
+                F52 = forks:get(52),
+                if
+                    Height < F52 ->
+                        ThingsToProve;
+                    true ->
+                        lists:filter(fun({_, X}) ->
+                                             not(X == <<0:256>>)
+                                     end, ThingsToProve)
+                end;
             contract_winnings_tx ->
                 #contract_winnings_tx{
               from = From,
@@ -564,15 +719,9 @@ txs_to_querys2([STx|T], Trees, Height) ->
               row = Row,
               proof = Proof
              } = Tx,
-                SubAccs = trees:sub_accounts(Trees),
-                %{_, SubAccount, _} = sub_accounts:get(SA, SubAccs),
-                %#sub_acc{
-                         %type = Type,
-                %          pubkey = Winner,%sanity
-                %          contract_id = CID%sanity check
-                %        } = SubAccount,
-                Contracts = trees:contracts(Trees),
-                {_, Contract, _} = contracts:get(CID, Contracts),
+                %Contracts = trees:contracts(Trees),
+                %{_, Contract, _} = contracts:get(CID, Contracts),
+                Contract = trees:get(contracts, CID, dict:new(), Trees),
                 U5 = case Contract of
                          empty ->
                             F51 = forks:get(51),
@@ -593,7 +742,7 @@ txs_to_querys2([STx|T], Trees, Height) ->
                                       <<0:256>> ->
                                           [{accounts, Winner}];
                                       _ ->
-                                          SA2 = sub_accounts:make_key(Winner, Source, SourceType),
+                                          SA2 = sub_accounts:make_v_key(Winner, Source, SourceType),
                                           [{sub_accounts, SA2}]
                                   end,
                              U3 = case Proof of
@@ -618,8 +767,9 @@ txs_to_querys2([STx|T], Trees, Height) ->
               cid2 = CID2,
               cid3 = CID3
              } = Tx,
-                Contracts = trees:contracts(Trees),
-                {_, Contract, _} = contracts:get(CID2, Contracts),
+                %Contracts = trees:contracts(Trees),
+                %{_, Contract, _} = contracts:get(CID2, Contracts),
+                Contract = trees:get(contracts, CID2, dict:new(), Trees),
                 U = case Contract of
                         empty -> 
                             F51 = forks:get(51),
@@ -670,9 +820,9 @@ txs_to_querys2([STx|T], Trees, Height) ->
                              {accounts, Acc2}];
                         _ ->
                             [{sub_accounts,
-                              sub_accounts:make_key(Acc1, CID1, Type1)},
+                              sub_accounts:make_v_key(Acc1, CID1, Type1)},
                              {sub_accounts,
-                              sub_accounts:make_key(Acc2, CID1, Type1)}]
+                              sub_accounts:make_v_key(Acc2, CID1, Type1)}]
                     end,
                 U2 = case CID2 of
                          <<0:256>> -> 
@@ -680,9 +830,9 @@ txs_to_querys2([STx|T], Trees, Height) ->
                               {accounts, Acc2}];
                          _ ->
                              [{sub_accounts,
-                               sub_accounts:make_key(Acc1, CID2, Type2)},
+                               sub_accounts:make_v_key(Acc1, CID2, Type2)},
                               {sub_accounts,
-                               sub_accounts:make_key(Acc2, CID2, Type2)}]
+                               sub_accounts:make_v_key(Acc2, CID2, Type2)}]
                      end,
                 [{governance, ?n2i(swap_tx)},
                  {trades, TradeID}] ++
@@ -716,9 +866,9 @@ txs_to_querys2([STx|T], Trees, Height) ->
                              {accounts, Acc2}];
                         _ ->
                             [{sub_accounts,
-                              sub_accounts:make_key(Acc1, CID1, Type1)},
+                              sub_accounts:make_v_key(Acc1, CID1, Type1)},
                              {sub_accounts,
-                              sub_accounts:make_key(Acc2, CID1, Type1)}]
+                              sub_accounts:make_v_key(Acc2, CID1, Type1)}]
                     end,
                 U2 = case CID2 of
                          <<0:256>> -> 
@@ -726,9 +876,9 @@ txs_to_querys2([STx|T], Trees, Height) ->
                               {accounts, Acc2}];
                          _ ->
                              [{sub_accounts,
-                               sub_accounts:make_key(Acc1, CID2, Type2)},
+                               sub_accounts:make_v_key(Acc1, CID2, Type2)},
                               {sub_accounts,
-                               sub_accounts:make_key(Acc2, CID2, Type2)}]
+                               sub_accounts:make_v_key(Acc2, CID2, Type2)}]
                      end,
                 F48 = forks:get(48),
                 R = if
@@ -750,17 +900,17 @@ txs_to_querys2([STx|T], Trees, Height) ->
               type2 = Type2
              } = Tx,
                 MID = markets:make_id(CID1, Type1, CID2, Type2),
-                MKey = sub_accounts:make_key(From, MID, 0),
+                MKey = sub_accounts:make_v_key(From, MID, 0),
                 U = case CID1 of
                         <<0:256>> -> [];
                         _ ->
-                            SubKey1 = sub_accounts:make_key(From, CID1, Type1),
+                            SubKey1 = sub_accounts:make_v_key(From, CID1, Type1),
                             [{sub_accounts, SubKey1}]
                     end,
                 V = case CID2 of
                         <<0:256>> -> [];
                         _ ->
-                            SubKey2 = sub_accounts:make_key(From, CID2, Type2),
+                            SubKey2 = sub_accounts:make_v_key(From, CID2, Type2),
                             [{sub_accounts, SubKey2}]
                     end,
                 [{governance, ?n2i(market_new_tx)},
@@ -777,17 +927,17 @@ txs_to_querys2([STx|T], Trees, Height) ->
               cid2 = CID2,
               type2 = Type2
              } = Tx,
-                MKey = sub_accounts:make_key(From, MID, 0),
+                MKey = sub_accounts:make_v_key(From, MID, 0),
                 U = case CID1 of
                         <<0:256>> -> [];
                         _ ->
-                            SubKey1 = sub_accounts:make_key(From, CID1, Type1),
+                            SubKey1 = sub_accounts:make_v_key(From, CID1, Type1),
                             [{sub_accounts, SubKey1}]
                     end,
                 V = case CID2 of
                         <<0:256>> -> [];
                         _ ->
-                            SubKey2 = sub_accounts:make_key(From, CID2, Type2),
+                            SubKey2 = sub_accounts:make_v_key(From, CID2, Type2),
                             [{sub_accounts, SubKey2}]
                     end,
                 [
@@ -808,13 +958,13 @@ txs_to_querys2([STx|T], Trees, Height) ->
                 U = case CID1 of
                         <<0:256>> -> [];
                         _ ->
-                            SubKey1 = sub_accounts:make_key(From, CID1, Type1),
+                            SubKey1 = sub_accounts:make_v_key(From, CID1, Type1),
                             [{sub_accounts, SubKey1}]
                     end,
                 V = case CID2 of
                         <<0:256>> -> [];
                         _ ->
-                            SubKey2 = sub_accounts:make_key(From, CID2, Type2),
+                            SubKey2 = sub_accounts:make_v_key(From, CID2, Type2),
                             [{sub_accounts, SubKey2}]
                     end,
                 [{accounts, From},
@@ -837,7 +987,271 @@ txs_to_querys2([STx|T], Trees, Height) ->
                  {governance, ?n2i(developer_reward)},
                  {accounts, constants:master_pub()},
                  {accounts, coinbase_tx:from(Tx)}
-                ]
+                ];
+            job_create_tx ->
+                Worker = job_create_tx:worker(Tx),
+                Salt = job_create_tx:salt(Tx),
+                ID = jobs:make_id(Worker, Salt),
+                BPub = constants:decompressed_burn(),
+                [{accounts, Worker},
+                 {accounts, BPub},
+                 {jobs, ID}];
+            job_receive_salary_tx ->
+                BPub = constants:decompressed_burn(),
+                [{accounts, job_receive_salary_tx:worker(Tx)},
+                 {accounts, BPub},
+                 {jobs, job_receive_salary_tx:id(Tx)}];
+            job_buy_tx ->
+                 ID = job_buy_tx:id(Tx),
+                Job = trees:get(jobs, ID),
+                #job{worker = W, boss = B} = Job,
+                BPub = constants:decompressed_burn(),
+                [{accounts, job_buy_tx:pub(Tx)},
+                 {accounts, W},
+                 {accounts, B},
+                 {accounts, BPub},
+                 {jobs, ID}];
+            job_adjust_tx ->
+                ID = job_adjust_tx:id(Tx),
+                Job = trees:get(jobs, ID),
+                BPub = constants:decompressed_burn(),
+                #job{worker = W, boss = B} = Job,
+                [{accounts, W},
+                 {accounts, B},
+                 {accounts, BPub},
+                 {jobs, ID}];
+            job_team_adjust_tx ->
+                ID = job_team_adjust_tx:id(Tx),
+                Job = trees:get(jobs, ID),
+                BPub = constants:decompressed_burn(),
+                #job{worker = W, boss = B} = Job,
+                [{accounts, W},
+                 {accounts, B},
+                 {accounts, BPub},
+                 {jobs, ID}];
+            futarchy_new_tx ->
+                #futarchy_new_tx{
+              futarchy_id = FID, decision_oid = DOID,
+              goal_oid = GOID, pubkey = Pubkey
+             } = Tx,
+                [{accounts, Pubkey},
+                 {futarchy, FID},
+                 {oracles, GOID},
+                 {oracles, DOID}];
+            futarchy_bet_tx ->
+                #futarchy_bet_tx{
+              fid = FID, pubkey = Pubkey,
+              limit_price = LP, amount = Amount,
+              decision = Decision, goal = Goal, nonce = Nonce
+             } = Tx,
+                case element(4, STx) of
+                    [] -> io:fwrite(STx);
+                    _ -> ok
+                end,
+                %io:fwrite("proofs futarchy_bet start\n"),
+                TIDCases = 
+                    case element(4, STx) of
+                        {0, TIDAhead, TIDBehind} ->
+                            %added an order to the book.
+                            %io:fwrite("proofs futarchy_bet, adding order to book\n"),%missing a futarchy unmatched.
+                            TA = case TIDAhead of
+                                     <<0:256>> -> [];
+                                     <<_:256>> -> 
+                                         [{futarchy_unmatched, TIDAhead}]
+                                 end,
+                            TB = case TIDBehind of
+                                     <<0:256>> -> [];
+                                     <<_:256>> -> 
+                                         [{futarchy_unmatched, TIDBehind}]
+                                 end,
+                            %io:fwrite("proofs futarchy_bet. many orders: "),%missing a futarchy unmatched.
+                            %io:fwrite(integer_to_list(length(TA++TB))),
+                            %io:fwrite("\n"),
+
+                            TA ++ TB;
+                        {1, TIDsMatched, TIDPartlyMatched, _, _} ->
+                            %io:fwrite("proofs futarchy_bet, matching order from the book\n"),
+                            %matched orders from the book.
+                            %todo, need the FMID of the new matched location. hash:doit(<<FID/binary, Pubkey/binary, nonce0:32>>
+%                            1=2, %we aren't calculating the futarchy_matched ids correctly. 
+%                            #futarchy_unmatched{
+%                                fid = TIDPartlyMatched,
+%                                owner = PMOwner,
+%                                nonce = PMNonce,
+%                               } = trees:get(futarchy_unmatched,
+%                                             TIDPartlyMatched),
+%                            FMID = futarchy_bet_tx:futarchy_matched_id_maker(
+                            %         FID, Pubkey, Nonce),
+%                                     TIDPartlyMatched, PMNonce, 
+%                                     PMOwner),
+                            TIDs = [TIDPartlyMatched|TIDsMatched],
+                            TIDs2 = lists:filter(fun(X) ->
+                                                         not(X == <<0:256>>)
+                                                 end, TIDs),
+                            TakerID = futarchy_matched:taker_id(
+                                        FID, Nonce, Pubkey),
+                            [{futarchy_matched, TakerID}] ++
+                            lists:map(
+                              fun(X) ->
+                                      {futarchy_unmatched, X}
+                                      end, TIDs2) ++
+                            lists:map(
+                              fun(X) ->
+%                                      #futarchy_unmatched{
+%                                   owner = MOwner,
+%                                   nonce = MNonce,
+%                                   futarchy_id = FID
+%                                  } = trees:get(
+%                                        futarchy_unmatched,
+%                                        X),
+                                      FMID2 = futarchy_matched:maker_id(X),
+%                                      FMID2 = futarchy_matched:maker_id(FID, MNonce, X, MOwner),
+%                                      FMID2 = futarchy_bet_tx:futarchy_matched_id_maker(
+%                                                FID, MOwner, X, MNonce),
+                                      {futarchy_matched, FMID2}
+                                      end, TIDs2);
+%                                [{futarchy_matched, FMID}];
+                        %{2,  TIDsMatched, TIDBehind, NewTopTID, _, _} ->
+                        {2,  TIDsMatched, NewTopTID, _, _} ->
+                            %partially matched
+                            %io:fwrite("proofs futarchy_bet, partial match of order from the book\n"),
+                            L1 = TIDsMatched,
+                            L2 = case NewTopTID of
+                                     <<0:256>> -> L1;
+                                     _ -> [NewTopTID|L1]
+                                 end,
+                            
+%                            io:fwrite({{new_top, NewTopTID},
+                                       %{tid_behind, TIDBehind},
+%                                       {rest, TIDsMatche}}),
+                            NewTID = (futarchy_unmatched:make_id(
+                                       #futarchy_unmatched
+                                       {owner = Pubkey, futarchy_id = FID, decision = Decision, goal = Goal, limit_price = LP, revert_amount = Amount}, 
+                                        Height))#futarchy_unmatched.id,
+                            io:fwrite("proofs new tid is \n"),
+                            io:fwrite(base64:encode(NewTID)),
+                            io:fwrite("\n"),
+                            FMIDc = futarchy_matched:taker_id(
+                                      FID, Nonce, Pubkey),
+                            [{futarchy_unmatched, NewTID},
+                             {futarchy_matched, FMIDc}] ++
+                            lists:map(fun(X) -> {futarchy_unmatched, X}
+                                      end, L2)
+                            ++ lists:map(fun(X) -> 
+                                                 {futarchy_matched, futarchy_matched:maker_id_with_tx_pool(X)}
+                                         end, L2)
+                    end,
+                NewFU0 = #futarchy_unmatched{
+                  owner = Pubkey,
+                  goal = Goal,
+                  decision = Decision,
+                  futarchy_id = FID,
+                  limit_price = LP,
+                  revert_amount = Amount
+                 },
+                NewFU = futarchy_unmatched:make_id(NewFU0, Height),
+                TID = NewFU#futarchy_unmatched.id,
+                R = [{accounts, Pubkey},
+                 {futarchy, FID},
+                 {futarchy_unmatched, TID}
+                    ] ++ TIDCases,
+                %io:fwrite(R),
+                R;
+            futarchy_resolve_tx ->
+                #futarchy_resolve_tx{
+              fid = FID, decision_oid = DOID, pubkey = Pubkey, 
+              creator = Creator
+             } = Tx,
+                Futarchy = trees:get(futarchy, FID),
+                {CID, _, _} = futarchy_resolve_tx:cid_oid(Futarchy),
+                Oracle = trees:get(oracles, DOID),
+                R = Oracle#oracle.result,
+                D = case R of
+                        1 -> 1;
+                        2 -> 0
+                    end,
+                #futarchy{
+                      shares_true_yes = STY,
+                      shares_true_no = STN,
+                      shares_false_yes = SFY,
+                      shares_false_no = SFN
+                     } = Futarchy,
+                {SY, SN} = 
+                    case D of
+                        1 -> 
+                            {STY, STN};
+                        0 -> 
+                            {SFY, SFN}
+                    end,
+
+                io:fwrite("proofs futarchy resolve tx, creator cid D. \n"),
+                io:fwrite(base64:encode(Creator)),
+                io:fwrite("\n"),
+                io:fwrite(base64:encode(CID)),
+                io:fwrite("\n"),
+                ToKey = 
+                    if
+                        SY > SN ->
+                            io:fwrite("1"),
+                            sub_accounts:make_v_key(Creator, CID, 1);
+                        true ->
+                            io:fwrite("0"),
+                            sub_accounts:make_v_key(Creator, CID, 0)
+                    end,
+                
+                %resolved oracle to 1.
+
+                io:fwrite("\n"),
+                %ToKey = 
+                %    case 
+%sub_accounts:make_v_key(Creator, CID, 1),
+%                ToKey2 = sub_accounts:make_v_key(Creator, CID, 0),
+                [{accounts, Pubkey},
+                 {accounts, Creator},
+                 {contracts, CID},
+                 {sub_accounts, ToKey},
+                 {futarchy, FID},
+                 {oracles, DOID}];
+            futarchy_unmatched_tx ->
+                #futarchy_unmatched_tx{
+              pubkey = Pubkey, fid = FID, bet_id = UID
+             } = Tx,
+                Futarchy = trees:get(futarchy, FID),
+                Unmatched = trees:get(futarchy_unmatched, UID),
+                Owner = Unmatched#futarchy_unmatched.owner,
+                [{accounts, Pubkey},
+                 {accounts, Owner},
+                 {futarchy, FID},
+                 {futarchy_unmatched, UID}];
+            futarchy_matched_tx ->
+                #futarchy_matched_tx{
+              pubkey = Pubkey, bet = MID, revert = Revert
+             } = Tx,
+                Matched = trees:get(futarchy_matched, MID),
+                #futarchy_matched
+                    {
+                      futarchy_id = FID, owner = Owner, 
+                      decision = Decision
+                    } = Matched,
+                Futarchy = trees:get(futarchy, FID),
+                {CID, _OID, _} = futarchy_resolve_tx:cid_oid(
+                                  Futarchy), 
+                OID = Futarchy#futarchy.decision_oid,
+                FMTL = case Revert of
+                        1 ->
+                            [{accounts, Owner}];
+                        0 ->
+                            D = case Decision of
+                                    1 -> 0;
+                                    0 -> 1
+                                end,
+                            SA = sub_accounts:make_v_key(Owner, CID, D),
+                            [{sub_accounts, SA}]
+                    end,
+                [{accounts, Pubkey},
+                 {oracles, OID},
+                 {futarchy, FID},
+                 {futarchy_matched, MID}] ++ FMTL
 	end,
     L ++ txs_to_querys2(T, Trees, Height).
 		 %{governance, ?n2i(oracle_bet)},
@@ -873,7 +1287,7 @@ ttqm2([Tx|T], Q, R) when is_record(Tx, oracle_new) ->
 ttqm2([H|T], Q, R) -> 
     ttqm2(T, Q, [H|R]).
 
--record(oracle_bet, {from, nonce, fee, id, type, amount}).
+%-record(oracle_bet, {from, nonce, fee, id, type, amount}).
 
 remove_oracle_bets(_OID, []) -> [];
 remove_oracle_bets(OID, [Tx|T]) 
@@ -980,7 +1394,6 @@ test() ->
     Facts = prove(Querys2, Trees),
     Dict,
     
-    ETxs = "g2wAAAAEaARkAAZzaWduZWRoBmQAAmNhbQAAAEEEhVmGzXqC2hD+5Qy6OXlpK62kiYLi9rwx7CAK96HowS4OOgO+1CphnkV5hxSFj9AuOkIGteOq9O0WI3iWLQ2GOmEBYRRtAAAAQQRHXAXlfMl3JIv7Ni5NmiaAhuff/NsmnCCnWElvuaemWoQ2aCFJzogO/dHY9yrDUsIHaqtS+iD1OW3KuPrpBgoCYjuaygBtAAAAYE1FVUNJUUR5Q0p1Y2h6TlEzUXBkbTk4VjFkWGNxQklEUjVlNDFoRWtlMGRvUkVNd2hBSWdKbjcza3hISzhNUXZDVUttcGEzbzRSWkJYR3FoMXNWV2NZZXNyQ3NRVlo4PWpoBGQABnNpZ25lZGgGZAACY2FtAAAAQQSFWYbNeoLaEP7lDLo5eWkrraSJguL2vDHsIAr3oejBLg46A77UKmGeRXmHFIWP0C46Qga146r07RYjeJYtDYY6YQJhFG0AAABBBFRjuCgudSTRU79SVoCBvWi55+N1QethvQI6LKUCoEPHvIfedkQLxnuD2VJHqoLrULmXyexRWs2sOTwyLsdyL+FiO5rKAG0AAABgTUVVQ0lRRG1naWwvSkxGRVJaN05LUEpZMHZFQ21nZUlsNFdkdU5SbmlzWkw2R25ZVFFJZ1dBOExUazNENEVva3EvWUY4U3d4SnljR1Ixd2RLejlRMWpJUmpyeEFzSDQ9amgEZAAGc2lnbmVkaApkAAJuY20AAABBBIVZhs16gtoQ/uUMujl5aSutpImC4va8MewgCveh6MEuDjoDvtQqYZ5FeYcUhY/QLjpCBrXjqvTtFiN4li0NhjptAAAAQQRUY7goLnUk0VO/UlaAgb1ouefjdUHrYb0COiylAqBDx7yH3nZEC8Z7g9lSR6qC61C5l8nsUVrNrDk8Mi7Hci/hYTJhA2IAACcQYgAAJxFhAmEEYQFtAAAAYE1FWUNJUUQ4U1hNeUYxQmRnbWRaRVdHbWFFR3JncXRxTXUvRGZJYmZVMnE1eE94ZUdnSWhBTTU3L21wcmFucDdiVTBSK2RoMS9wZjBOeHViVWJIU256UEFrcFY5b1gwNW0AAABgTUVVQ0lIeTdhenJyYmxIdzdSdEVmRVRMcU5ERTdCUUhmb1Rnd29CVHlZV0JKcHd0QWlFQWxPcnRhY1k1NVFSNUZUVUpoVFltbW5TWldtSGZ4cFUvbmExbjJsSVhJdm89aARkAAZzaWduZWRoCmQAAm5jbQAAAEEER1wF5XzJdySL+zYuTZomgIbn3/zbJpwgp1hJb7mnplqENmghSc6IDv3R2Pcqw1LCB2qrUvog9Tltyrj66QYKAm0AAABBBFRjuCgudSTRU79SVoCBvWi55+N1QethvQI6LKUCoEPHvIfedkQLxnuD2VJHqoLrULmXyexRWs2sOTwyLsdyL+FhMmEBYgAAJxBiAAAnEWECYQRhAm0AAABgTUVRQ0lCZHlWUUhxRlZyQWFGMTVsN0NmajlyckU5THI3RFFUWVJrc3c5d3dMek1nQWlBOGZrMXpIVVgwdlN6b0dVQ05JTGRmRER5Y2lNMnlWVldLb0pnTGNUbUZhdz09bQAAAGBNRVFDSUJvV3pJQU9oUExqTXJjN0tnV3ZFOUxhWmdXdllqYTY0Mk10YzE0S3RFdXNBaUFhRktDTmNhQUFSck9NUVNCUmZMKzdPV054aHduaWdwRUZBc1JaL0c3MmVBPT1q",
     %Txs = binary_to_term(base64:decode(ETxs)),
     {Pub30, Priv30} = signing:new_key(),
     {Pub4, _} = signing:new_key(),
@@ -994,15 +1407,31 @@ test() ->
     Q2 = txs_to_querys2(Txs, Trees, 1),
     prove(Q2, Trees),
     success.
+oracle_type_get(Trees, OID, Height) 
+  when is_integer(Trees) ->    
+    %the version for verkle trees.
+    [{governance, 
+      ?n2i(oracle_question_liquidity)}];
 oracle_type_get(Trees, OID, Height) ->    
+    %using old way of looking up info from the oracle, because the new way is hard coded. %trees:oracles, oracles:get, instead of trees:get(oracle, ...
     Oracles = trees:oracles(Trees),
     {_, Oracle, _} = oracles:get(OID, Oracles),
+    case Oracle of
+        empty -> [];
+        _ ->
+    if
+        not(is_record(Oracle, oracle)) ->
+            io:fwrite({Oracle, Oracles, Trees});
+        true -> ok
+    end,
     Gov = Oracle#oracle.governance,
     NF14 = Height < forks:get(14),
-    if 
+    X = if 
         NF14 -> ?n2i(oracle_initial_liquidity);
         (Gov == 0) -> ?n2i(oracle_question_liquidity);
         true -> ?n2i(oracle_initial_liquidity)
+    end,
+            [{governance, X}]
     end.
    
 use_contract_sub_accounts(Tx) ->    
@@ -1015,7 +1444,7 @@ use_contract_sub_accounts(Tx) ->
     %return a list like [{sub_accounts, X}|...]
 ucsa2(0, _, _) -> [];
 ucsa2(N, Acc, CID) -> 
-    Key = sub_accounts:make_key(Acc, CID, N),
+    Key = sub_accounts:make_v_key(Acc, CID, N),
     [{sub_accounts, Key}] ++ 
         ucsa2(N-1, Acc, CID).
 
@@ -1023,7 +1452,7 @@ sub_accounts_loop([], _, _, _) -> [];
 sub_accounts_loop([<<0:32>>|T],Winner,CID,N) -> 
     sub_accounts_loop(T,Winner,CID,N+1);
 sub_accounts_loop([<<X:32>>|T],Winner,CID,N) -> 
-    Key = sub_accounts:make_key(Winner, CID, N),
+    Key = sub_accounts:make_v_key(Winner, CID, N),
     [{sub_accounts, Key}|
      sub_accounts_loop(T,Winner,CID,N+1)].
 

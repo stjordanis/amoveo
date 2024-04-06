@@ -66,10 +66,17 @@ go(Tx, Dict, NewHeight, NonceCheck) ->
                    min(Give0, BalanceBeforeFlashLoan);
                true -> Give0
            end,
+%    Nonce2 = 
+%        if
+%            (NonceCheck and (NewHeight > F41)) -> Nonce;
+%            true -> none
+%        end,
     Nonce2 = 
-        if
-            (NonceCheck and (NewHeight > F41)) -> Nonce;
-            true -> none
+        if (NewHeight > F41) ->
+                nonce_check:doit(
+                  NonceCheck, 
+                  Tx#market_swap_tx.nonce);
+           true -> none
         end,
     Facc = accounts:dict_update(From, Dict, -Fee, Nonce2),
     Dict2 = accounts:dict_write(Facc, Dict),
@@ -115,7 +122,7 @@ go(Tx, Dict, NewHeight, NonceCheck) ->
                 %true = Get > Take,
                 {Get, -Give}
         end,
-    Gov = governance:dict_get_value(market_trading_fee, Dict2),
+    Gov = governance:dict_get_value(market_trading_fee, Dict2, NewHeight),
     N = 100000000,
     {G1, G2} = 
         if

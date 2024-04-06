@@ -19,10 +19,13 @@ make(From, Fee, OID, Trees) ->
 go(Tx, Dict, NewHeight, NonceCheck) ->
     From = Tx#oracle_close.from,
     %txs:developer_lock(From, NewHeight, Dict),
-    Nonce = if
-		NonceCheck -> Tx#oracle_close.nonce;
-		true -> none
-	    end,
+%    Nonce = if
+%		NonceCheck -> Tx#oracle_close.nonce;
+%		true -> none
+%	    end,
+    Nonce = nonce_check:doit(
+              NonceCheck, 
+              Tx#oracle_close.nonce),
     Acc = accounts:dict_update(From, Dict, -Tx#oracle_close.fee, Nonce),
     Dict2 = accounts:dict_write(Acc, Dict),
     OID = Tx#oracle_close.oracle_id,
@@ -38,11 +41,11 @@ go(Tx, Dict, NewHeight, NonceCheck) ->
     F14 = forks:get(14),
     OIL = if
               NewHeight < F14 ->
-                  governance:dict_get_value(oracle_initial_liquidity, Dict);
+                  governance:dict_get_value(oracle_initial_liquidity, Dict, NewHeight);
               Gov == 0 -> 
-                  governance:dict_get_value(oracle_question_liquidity, Dict);
+                  governance:dict_get_value(oracle_question_liquidity, Dict, NewHeight);
               true ->
-                  governance:dict_get_value(oracle_initial_liquidity, Dict)
+                  governance:dict_get_value(oracle_initial_liquidity, Dict, NewHeight)
           end,
     %OIL = governance:dict_get_value(oracle_initial_liquidity, Dict2),
     F10 = NewHeight > forks:get(10),
@@ -58,14 +61,20 @@ go(Tx, Dict, NewHeight, NonceCheck) ->
     Oracle3 = Oracle#oracle{done_timer = NewHeight, result = Result},
     Dict4 = oracles:dict_write(Oracle3, Dict2),
     Gov = Oracle3#oracle.governance,
-    MOT = governance:dict_get_value(maximum_oracle_time, Dict4),
+    MOT = governance:dict_get_value(maximum_oracle_time, Dict4, NewHeight),
     Dict5 = 
         case Gov of
             0 ->
 		%is not a governance oracle.
 		B1 = Oracle#oracle.done_timer < NewHeight,
 		B2 = Oracle3#oracle.starts + MOT < NewHeight,
-		true = (B1 or B2),
+		if
+                    (B1 or B2) -> ok;
+                    true -> 
+                        io:fwrite({Oracle#oracle.done_timer, NewHeight, Oracle3#oracle.starts, MOT}),
+                        1=2,
+                        ok
+                end,
 		Dict4;
 	    G ->
                 %io:fwrite("governance branch\n"),

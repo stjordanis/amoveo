@@ -36,7 +36,7 @@
                 txs,%LTS
                 prev_hashes = {prev_hashes},
                 proofs = [],%LTS
-                roots,%LTS  
+                roots,%LTS  %hash(roots) == prev_block.trees_hash
                 meta = <<>>, % we need to calculate locally.
 		market_cap = 0,%LTS
 		channels_veo = 0,%LTS
@@ -273,3 +273,79 @@
      period,
      margin
 }).
+
+-record(exist, {hash, height}).
+% -record(oracle_bet, {id, true, false, bad}).%true, false, and bad are the 3 types of shares that can be purchased from an oracle%
+-record(orders, {aid, amount, pointer}).%
+-record(consensus_state, {empty = true, val, key, unhashed_key, type}).
+
+-record(job, {id, worker, boss, value, salary, balance, time}).
+-record(futarchy,
+        {fid, %deterministically generated from other values.
+         creator, %provides liquidity for the lmsr, and needs to receive extra money from the lmsr later.
+         decision_oid, %determines which market gets reverted. true/false
+         goal_oid, %determines who wins the bet in the non-reverted market. yes/no
+         root_hash = <<0:256>>, %update every time there is a trade.
+         true_yes_orders = <<0:256>>, %linked list of orders in the order book, by price.
+         true_no_orders = <<0:256>>, 
+         false_yes_orders = <<0:256>>,
+         false_no_orders = <<0:256>>,
+         batch_period,
+         liquidity_true = 0, %liquidity in the optional lmsr market.
+         liquidity_false = 0,
+         shares_true_yes = 0,%total shares purchased for the case where the decision is true, and the goal is yes.
+         shares_true_no = 0,
+         shares_false_yes = 0,
+         shares_false_no = 0,
+         active = 1,
+         many_trades = 0}).
+-record(futarchy_unmatched,
+        {id,
+         owner,%who made this bet
+         futarchy_id,
+         decision,%the bet doesn't get reverted in which outcome of the decision oracle?
+         goal,
+         revert_amount,
+         limit_price,
+         ahead, %they are in a linked list sorted by price. This is the order book.
+         behind, %by making it a double linked list, our proofs can be smaller. We don't need to prove the chain back to the futarchy market.
+         nonce = 0 %used for generating unique IDs for if portions of this order are matched.
+         }).
+-record(futarchy_matched,
+        {id,
+         owner,%who made this bet
+         futarchy_id,
+         decision,%the bet doesn't get reverted in which outcome of the decision oracle?
+         goal,%which outcome are you betting on.
+         revert_amount,
+         win_amount% > or == the limit_price
+         }).
+-record(futarchy_new_tx,
+        {pubkey, nonce, fee,
+         decision_oid, %id of the decision oracle
+         goal_oid, %id of the goal oracle
+         futarchy_id,
+         period, %how long until the next fixed price batch can execute.
+         true_liquidity, %how much money to put into liquidity for a lmsr market for the case where the decision is True.
+         false_liquidity
+        }).
+-record(futarchy_bet_tx,
+        {pubkey, nonce, fee,
+        fid, %the id of the futarchy market
+        limit_price, %the highest price you are willing to pay.
+        amount, %the amount of veo you are risking.
+        decision, %your bet is not reverted if this decision is selected. true/false
+        goal, %you win if the goal oracle finalizes in this state. true/false
+        futarchy_hash %root hash of market state before this trade is executed.
+        }).
+-record(futarchy_matched_tx,
+        {pubkey, nonce, fee,
+        amount, bet, revert}).
+-record(futarchy_unmatched_tx,
+        {pubkey, nonce, fee, fid, bet_id, amount}).
+-record(futarchy_resolve_tx,
+        {pubkey, nonce, fee,
+         fid, %id of the futarchy
+         creator, %person who originally made this futarchy market.
+         decision_oid %id of the decision oracle, which is now finalized
+        }).

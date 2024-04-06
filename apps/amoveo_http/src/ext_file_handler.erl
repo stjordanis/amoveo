@@ -8,6 +8,9 @@ init(Req, Opts) ->
 	handle(Req, Opts).
 handle(Req, State) ->
     F = cowboy_req:path(Req),
+    %io:fwrite("path is "),
+    %io:fwrite(F),
+    %io:fwrite("\n"),
     PrivDir0 = 
 	case application:get_env(amoveo_core, kind) of
 	    {ok, "production"} ->
@@ -18,7 +21,32 @@ handle(Req, State) ->
 		"../../../../_build/dev1/lib/light_node/src/js"
 	end,
     PrivDir = list_to_binary(PrivDir0),
-    B = case F of
+    F1 = case F of
+             <<"/crypto", Rest/binary>> -> Rest;
+             <<"/explorers", Rest/binary>> -> Rest;
+             <<"/vm", Rest/binary>> -> Rest;
+             <<"/wallet", Rest/binary>> -> Rest;
+             <<"/verkle", Rest/binary>> -> Rest;
+             Otherwise -> Otherwise
+         end,
+    WhiteListed = 
+        case F1 of
+            %first verkle stuff
+            <<"/binary.js">> -> true;
+            <<"/ed.js">> -> true;
+            <<"/finite_inverse.js">> -> true;
+            <<"/fq.js">> -> true;
+            <<"/fr.js">> -> true;
+            <<"/hash.js">> -> true;
+            <<"/ipa.js">> -> true;
+            <<"/multi_exponent.js">> -> true;
+            <<"/multiproof.js">> -> true;
+            <<"/noble-ed25519.js">> -> true;
+            <<"/points.js">> -> true;
+            <<"/poly.js">> -> true;
+            <<"/precomputes.js">> -> true;
+            <<"/verkle.js">> -> true;
+
             <<"/peer_scan.html">> -> true;
             <<"/peer_scan.js">> -> true;
             <<"/channels_interface.js">> -> true;
@@ -60,7 +88,9 @@ handle(Req, State) ->
             <<"/explorer_title.js">> -> true;
             <<"/lightning.js">> -> true;
             <<"/encryption.js">> -> true;
+            <<"/crypto/encryption.js">> -> true;
             <<"/encryption_interface.js">> -> true;
+            <<"/crypto/encryption_library.js">> -> true;
             <<"/encryption_library.js">> -> true;
             <<"/encryption.html">> -> true;
             <<"/finance_game.html">> -> true;
@@ -81,25 +111,33 @@ handle(Req, State) ->
             <<"/oracle_list.js">> -> true;
             <<"/active_oracles.js">> -> true;
             <<"/channels.js">> -> true;
+            <<"/crypto/headers.js">> -> true;
             <<"/headers.js">> -> true;
             <<"/server.js">> -> true;
             <<"/codecBytes.js">> -> true;
+            <<"/crypto/codecBytes.js">> -> true;
             <<"/height.js">> -> true;
             <<"/sha256.js">> -> true;
+            %<<"/crypto/sha256.js">> -> true;
             <<"/combine_cancel_assets.js">> -> true;
             <<"/hexbase64.js">> -> true;
+            <<"/crypto/signing.js">> -> true;
             <<"/signing.js">> -> true;
             <<"/create_account.js">> -> true;
             <<"/delete_account.js">> -> true;
+            <<"/crypto/keys.js">> -> true;
             <<"/keys.js">> -> true;
             <<"/keys2.js">> -> true;
             <<"/sjcl.js">> -> true;
+            <<"/crypto/sjcl.js">> -> true;
             <<"/crypto.js">> -> true;
+            <<"/crypto/crypto.js">> -> true;
             <<"/lookup_account.js">> -> true;
             <<"/create_account_tx.js">> -> true;
             <<"/delete_account_tx.js">> -> true;
             <<"/spend_tx.js">> -> true;
             <<"/elliptic.min.js">> -> true;
+            <<"/crypto/elliptic.min.js">> -> true;
             <<"/lookup_block.js">> -> true;
             <<"/explorer.html">> -> true;
             <<"/lookup_oracle.js">> -> true;
@@ -107,6 +145,7 @@ handle(Req, State) ->
             <<"/favicon.ico">> -> true;
             <<"/market.js">> -> true;
             <<"/unused.js">> -> true;
+            <<"/crypto/merkle_proofs.js">> -> true;
             <<"/merkle_proofs.js">> -> true;
             <<"/wallet.html">> -> true;
             <<"/BigInteger.js">> -> true;
@@ -157,7 +196,7 @@ handle(Req, State) ->
             <<"/scalar_derivative.js">> -> true;
             <<"/swaps.js">> -> true;
             <<"/buy_veo_contract.js">> -> true;
-            <<"/buy_veo_contract.js">> -> true;
+            <<"/sell_veo_contract.js">> -> true;
             <<"/buy_veo_contracts_viewer.js">> -> true;
             <<"/sub_accounts.js">> -> true;
             <<"/pool_tab_builder.js">> -> true;
@@ -169,6 +208,8 @@ handle(Req, State) ->
             <<"/create_futarchy_tab_builder.js">> -> true;
             <<"/crosschain_tab_builder.js">> -> true;
             <<"/crosschain_tab_builder2.js">> -> true;
+            <<"/crosschain_tab_builder3.js">> -> true;
+            <<"/bet_tab_builder.js">> -> true;
             <<"/tabs.js">> -> true;
             <<"/contract_explorer.js">> -> true;
             <<"/contract_explorer.html">> -> true;
@@ -188,6 +229,12 @@ handle(Req, State) ->
             <<"/offer_explorer.js">> -> true;
             <<"/block_explorer.html">> -> true;
             <<"/block_explorer.js">> -> true;
+            <<"/swap_offer_downloader.js">> -> true;
+            <<"/dex_tools.js">> -> true;
+            <<"/employment.html">> -> true;
+            <<"/employment.js">> -> true;
+            <<"/jobs_explorer.html">> -> true;
+            <<"/jobs_explorer.js">> -> true;
             X -> 
                 io:fwrite("ext file handler unknown page: "),
                 io:fwrite(X),
@@ -195,12 +242,15 @@ handle(Req, State) ->
                 false
         end,
     File = if
-               B ->
+               WhiteListed ->
     %File = << PrivDir/binary, <<"/external_web">>/binary, F/binary>>,
                    << PrivDir/binary, F/binary>>;
                true -> <<PrivDir/binary, "/home.html">>
            end,
     {ok, _Data, _} = cowboy_req:read_body(Req),
+    %io:fwrite("read file "),
+    %io:fwrite(File),
+    %io:fwrite("\n"),
     Text = read_file(File),
     
     Headers = #{<<"content-type">> => <<"text/html">>,

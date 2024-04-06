@@ -14,12 +14,9 @@ handle_cast(check, BS) ->
     BS2 = BS#d{blocks = B2},
     {noreply, BS2}.
 handle_call({add, Height, Many, Blocks}, _From, BS) ->
-    %io:fwrite("block organizer handler call add\n"),
     BS2 = merge(Height, Many, Blocks, BS#d.blocks, [], BS#d.top),
-    %io:fwrite("block organizer handler call add 2\n"),
     %io:fwrite(BS),
-    B2 = helper(BS2#d.blocks), 
-    %io:fwrite("block organizer handler call add 3\n"),
+    B2 = helper(BS2#d.blocks), %crashes here.
     BS3 = BS2#d{blocks = B2},
     {reply, ok, BS3};
 handle_call(top, _From, BS) -> 
@@ -77,7 +74,7 @@ helper([{Height, Many, CB}|T]) ->
             %io:fwrite("block absorber save start"),
             %spawn(fun() ->
             UCB = block_db:uncompress(CB),
-            block_absorber:save(UCB),%maybe this should be a cast.
+            block_absorber:save(UCB),%crashes here.
            %               ok
              %     end),
             %io:fwrite("block absorber save finish"),
@@ -96,7 +93,9 @@ add(Blocks) ->
     %io:fwrite("block organizer add\n"),
     %io:fwrite(packer:pack(Blocks)),
     {Blocks2, AddReturn} = add1(Blocks, []),
-    {ok, Cores} = application:get_env(amoveo_core, block_threads),
+    %io:fwrite("block organizer add1 finished\n"),
+    %{ok, Cores} = application:get_env(amoveo_core, block_threads),
+    Cores = 1,
     add3(lists:reverse(Blocks2), (length(Blocks2) div Cores) + 1),
     %spawn(fun() ->
     %              P = pid(),
@@ -106,7 +105,7 @@ add(Blocks) ->
     %                      erlang:garbage_collect(P);
     %                  true -> ok
     %              end
-    %      end),
+    %     end),
     %add4(lists:reverse(Blocks2)),
     AddReturn.
 add3([], _) -> ok;
@@ -118,6 +117,7 @@ add3(Blocks, Many)->
     add3(B, Many).
 %add3(Blocks) -> add4(Blocks).
 add4(Blocks) ->
+    %io:fwrite("block organizer add 4\n"),
     spawn(fun() ->
                   Height = element(2, hd(Blocks)),
                   %Height2 = element(2, hd(lists:reverse(Blocks))),
@@ -147,8 +147,8 @@ add5([]) ->
     %io:fwrite("block organizer add5 done\n"),
     [];
 add5([Block|T]) ->
-    {Dict, NewDict, BlockHash} = block:check0(Block),
-    Block2 = Block#block{trees = {Dict, NewDict, BlockHash}},
+    X = block:check0(Block),
+    Block2 = Block#block{trees = X},
     [Block2|add5(T)].
 add1([], []) -> {[], 0};
 add1([X], L) -> 
@@ -160,14 +160,24 @@ add1([H|T], L) ->
     add1(T, L2).
 add2(Block, Out) ->
     if
-	not(is_record(Block, block)) -> {Out, 0};
+	not(is_record(Block, block)) -> 
+            io:fwrite("block organizer tried adding something that was not a block\n"),
+            {Out, 0};
 	true ->
 	    Height = Block#block.height,
 	    BH = block:hash(Block),
 	    BHC = block_hashes:check(BH),
 	    if
-		Height == 0 -> {Out, 0};
-		BHC -> {Out, 3}; %we have seen this block already
-		true -> {[Block|Out], 0}
+		Height == 0 -> 
+                    io:fwrite("block organizer add2 height 0 \n"),
+                    {Out, 0};
+		BHC -> 
+                    %io:fwrite("block organizer add2 block hash check activated \n"),
+                    %io:fwrite(integer_to_list(Height)),
+                    %io:fwrite("\n"),
+                    {Out, 3}; %we have seen this block already
+		true -> 
+
+                    {[Block|Out], 0}
 	    end
     end.

@@ -46,7 +46,9 @@ handle_call({add, Hash, TotalWork, Height}, _, X) ->
 				      A1 < B1
 			      end,
 			      X#r.blocks),
+              %io:fwrite("about to remove before\n"),
               Blocks = remove_before(BS, AncestorsWork),
+              %io:fwrite("removed before\n"),
               %Blocks = remove_before(X#r.blocks, AncestorsWork),
               #r{blocks = [{Hash, TotalWork}|Blocks], work = TotalWork, save_limit = AncestorsWork};
           TotalWork > X#r.save_limit ->
@@ -80,7 +82,13 @@ remove_before([{Hash, TotalWork}|T], X) when TotalWork < X ->
 	%true ->
 	    H = KeepBlock#block.prev_hash,
 	    OldBlock = block:get_by_hash(H),
-	    tree_data:garbage(OldBlock, KeepBlock);
+            %io:fwrite("doing a garbage\n"),
+	    tree_data:garbage(OldBlock, KeepBlock),
+            %io:fwrite("attempt to scan after garbage\n"),
+            %trees2:scan_verkle(
+            %  KeepBlock#block.trees, tree:cfg(amoveo)),
+            %io:fwrite("scan succeeded\n"),
+            ok;
 	true -> ok
     end,
     remove_before(T, X);

@@ -43,6 +43,11 @@ start_external() ->
         cowboy_router:compile(
           [{'_', [{"/ext/:file", get_api_handler, []},
 		  {"/:file", ext_file_handler, []},
+		  {"/crypto/:file", ext_file_handler, []},
+		  {"/vm/:file", ext_file_handler, []},
+		  {"/wallet/:file", ext_file_handler, []},
+		  {"/explorers/:file", ext_file_handler, []},
+		  {"/verkle/:file", ext_file_handler, []},
                   {"/", ext_handler, []}
                  ]}]),
     {ok, Port} = application:get_env(amoveo_core, port),

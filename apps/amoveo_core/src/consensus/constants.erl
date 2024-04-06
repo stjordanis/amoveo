@@ -31,15 +31,26 @@ master_pub() ->
 	     124,15,19,53,47,199,101,54,159,33,2,193,105,148,36,244,
 	     97,47,22,207,60,175,158,167,199,152,51,25,83,197,83,191,
 	     194,116,18,229,105,172,24,130,156,172,243,251,252,92,53,
-	     89,87>>;
+	     89,87>>; % base64 encoded, this is: <<"BL0SzhkFGFW1kTTdnO8sGnwPEzUvx2U2nyECwWmUJPRhLxbPPK+ep8eYMxlTxVO/wnQS5WmsGIKcrPP7/Fw1WVc=">>
 	_ ->
 	    {ok, X} = application:get_env(amoveo_core, master_pub),
 	    base64:decode(X)
     end.
-burn_address() ->
-<<0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-  0,0,0,0,0,0,0,0,0,0,0,0,0,4,20,12,120,148,15,106,36,253,
-  255,199,136,115,212,73,13,33,0,0,0,0,0,0,0>>.
+
+compressed_burn() ->
+    %H = hash:doit(<<"burn">>).
+    %trees2:compress_pub(trees2:decompress_pub(<<0, H/binary>>)).
+    <<6,133,159,172,197,164,201,184,10,194,238,247,137,22,193,
+      149,59,204,202,171,96,20,187,17,185,222,131,55,67,14,
+      163,79,12>>.
+decompressed_burn() ->
+<<4,133,159,172,197,164,201,184,10,194,238,247,137,22,193,
+  149,59,204,202,171,96,20,187,17,185,222,131,55,67,14,
+  163,79,12,44,95,249,84,73,140,186,4,206,150,209,152,247,
+  25,106,181,8,250,101,41,54,169,238,228,188,0,126,155,31,
+  238,166,138>>.
+    
+    
     
 custom_root_location() ->
     case application:get_env(amoveo_core, files) of
@@ -95,6 +106,7 @@ sub_account_size() ->
     ((balance_bits() + account_nonce_bits()) div 8) + 4 + pubkey_size() + hash_size().
 account_size() ->
 	((balance_bits() + account_nonce_bits()) div 8) + (hash_size()) + pubkey_size().
+%6 + 3 + 32 + 65 = 106.
 contract_size() ->
     ((balance_bits() +
           channel_nonce_bits() + 
@@ -129,7 +141,8 @@ start_time() -> 15192951759.
 time_bits() -> 40.
 version_bits() -> 16.%so we can update it more than 60000 times.
 period_bits() -> 16. %so the maximum block time is about 109 minutes
-server_ip() -> {139,59,144,76}.
+%server_ip() -> {139,59,144,76}.
+server_ip() -> {139,223,85,216}.
 server_port() -> 8080.
 channel_granularity() -> 10000.
 

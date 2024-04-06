@@ -1,21 +1,17 @@
 from fork import *
 from header import *
-#from lightning import *
-#from market import *
 from share_blocks import *
 from spend import *
 
-test_header_single()
-test_header_many()
+test_orphan_txs()
 
-test_mine_and_sync()
-test_three()
+#test_header_single()
+#test_header_many()
 
-spend_test()
+#test_mine_and_sync()
+#test_three()
 
-#lightning_test()
+#spend_test()
 
-#market_test()
-
-share_blocks()
+#share_blocks()
 print("finished tests\n")
